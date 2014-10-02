@@ -1,0 +1,167 @@
+#! /bin/sh
+
+name=$(basename $0)
+
+
+# ops list_instances -H ID -f "tag-name:test"
+function usage
+{
+    echo "Usage : ${name} [-options] [<command> [<args> ...]]"
+    echo "      : ${name} --help | -h"
+    echo ""
+    echo "    <command> : system command or shell script, defaults to 'env'"
+    echo "    <args>    : arbitrary arguments to <command>"
+    echo ""
+    echo "Runs command with a given environment profile."
+cat <<EOF
+
+options :
+
+    --profile | -p <profile>
+            override DEVOPS_PROFILE
+
+    --system  | -s <system>
+            override DEVOPS_SYSTEM
+
+    --force   | -f
+            ignore missing directory errors
+
+    --debug   | -d
+            debug information
+
+    -h
+            brief help message
+
+    --help
+            a long version of the help message
+EOF
+}
+
+
+function brief
+{
+usage
+cat <<EOF
+
+Reads key/value pairs from the following files (default paths):
+
+    ~/.devops/profiles/<profile>/profile.env
+    ./systems/<system>/system.env
+
+The .env format is roughly:
+
+    # comment - no leading spaces are allowed.
+    MY_SETTING="my value"
+    Valid=no
+    MY_FILE={{ profile_home }}/myfile.conf
+
+The values are exported into the environment of the command being
+called. Note that the following will not work:
+
+    $ rp echo "$MY_SETTING"
+
+but the following will:
+
+    $ rp eval "echo \$MY_SETTING"
+    my value
+or
+    $ rp sh
+    echo "$MY_SETTING"
+    exit
+
+The profile environment does not exists before or after the call.
+
+<system> and <profile> are optional, and may also be given in the
+environment, but command line arguments will override these.
+
+The default paths without the above settings are:
+
+    ~/.devops/profiles/profile.env
+    ./systems/system.env
+
+Both files are read in that order when present, but none are required.
+Without .env files, certain paths are still exposed to the environment
+which may be used to locate other configuration files.
+EOF
+}
+
+function short_help
+{
+    echo "$(brief)\n\nMore help with: ${name} --help"
+    exit 0
+}
+
+function fail
+{
+    usage >&2 
+    echo $1 >&2
+    exit $E_BAD_ARGS
+}
+
+function help
+{
+    echo "$(brief)\n\n\n" | cat - $(dirname $0)/run-profile-help 
+    exit 0
+}
+
+# parse args : http://stackoverflow.com/a/24121652
+# we cannot use this directly - we must stop at a command and fail at unknown option
+# then collect the remains for the subcommand - but it is nice base.
+
+STD_IN=0
+
+prefix=""
+key=""
+value=""
+while [ ! -z "$1" ]
+do
+  keyValue=$1
+  case "${prefix}${keyValue}" in
+    -h)                 key="-h";     value=1;;
+    --help)             key="-H";     value=1;;
+    -p=*|--profile=*)   key="-p";     value="${keyValue#*=}";;
+    -s=*|--system=*)    key="-s";     value="${keyValue#*=}";;
+    -d|--debug)         key="-d";     value=1;;
+    -f|--force)         key="-f";     value=1;;
+    -|--stdin)          key="-";      value=1;;
+    --) shift; break;;
+    -*) fail "error: bad option: $1";;
+    *) break;; 
+  esac
+  shift
+  case $key in
+    -h) short_help; exit 0;;
+    -H) help; exit 0;;
+    -p) export DEVOPS_PROFILE="${value}";         prefix=""; key="";;
+    -s) export DEVOPS_SYSTEM="${value}";          prefix=""; key="";;
+    -d) export DEVOPS_DEBUG="${value}";           prefix=""; key="";;
+    -f) export DEVOPS_FORCE="${value}";           prefix=""; key="";;
+    -)  STD_IN=${value};                          prefix=""; key="";; 
+    *)  prefix="${keyValue}=";;
+  esac
+done
+
+# we don't really need it, but nice to have parsed, just in case
+if [ $STD_IN != 0 ]; then
+    fail "error: bad option '-' (stdin)"
+fi
+
+# missing command, or unknown option
+if [ -z "$1" ]; then
+    CMD=env
+else
+    CMD=$@
+fi
+
+# http://stackoverflow.com/questions/592620/how-to-check-if-a-program-exists-from-a-bash-script
+# this method is Posix compliant.
+command -v $1 >/dev/null 2>&1 || fail "error: command not found: $1"
+
+
+# TEST CODE  /  INCOMPLETE CODE
+
+source `dirname $0`/load-profile
+
+echo test: ec2 ini path: ${EC2_INI_PATH}
+$CMD
+

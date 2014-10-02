@@ -1,0 +1,70 @@
+#!/bin/sh
+# http://stackoverflow.com/questions/19331497/set-environment-variables-from-file
+
+set -e
+
+if [ "x$(basename $0)" == "xload_user_env" ]; then
+    echo >&2 "source this file before executing a command"
+    echo >&2 "see also bin/help load_profile"
+    exit 1
+fi
+
+function trace
+{
+if [ $DEVOPS_DEBUG ]; then
+    echo $@
+fi
+}
+
+# also consider using a function 
+# http://stackoverflow.com/questions/5777170/substitution-with-sed-bash-function
+# TODO: give argument of valid template args.
+function process
+{
+    trace "searching: $1"
+    if [ -e "$1" ]; then
+        trace "processing: $1"
+        set -e
+        export $(cat $1 \
+            | sed 's/{{ profile_home }}/redacted-for-test/'  \
+            | grep -v ^# | xargs)
+    else
+        trace "skipping: $1"
+    fi
+}
+
+function check
+{
+    option="$1=$2"
+    trace $option
+    if [ ! -d $2 ]; then
+        echo >&2 "error: expected a directory: $2"
+        if [ ! $DEVOPS_FORCE ]; then
+            echo >&2 "... aborting"
+            exit 1
+        fi
+        trace "force flag overrides error, continuing"
+    fi
+}
+
+# see bin/help run
+# for specfication
+export DEVOPS_PROFILE_ROOT=${DEVOPS_PROFILE_ROOT:-${HOME}/.devops/profiles}
+check DEVOPS_PROFILE_ROOT ${DEVOPS_PROFILE_ROOT}
+process "${DEVOPS_PROFILE_ROOT}/common_profile.env"
+
+export DEVOPS_PROFILE=${DEVOPS_PROFILE:-""}
+export DEVOPS_PROFILE_HOME=${DEVOPS_PROFILE_ROOT}/${DEVOPS_PROFILE}
+check DEVOPS_PROFILE_HOME ${DEVOPS_PROFILE_ROOT}
+process "${DEVOPS_PROFILE_HOME}/profile.env"
+
+export DEVOPS_SYSTEM_ROOT=${DEVOPS_SYSTEM_ROOT:-$(pwd)/systems}
+check DEVOPS_SYSTEM_ROOT ${DEVOPS_SYSTEM_ROOT}
+process ${DEVOPS_SYSTEM_ROOT}/common_system.env
+
+export DEVOPS_SYSTEM=${DEVOPS_SYSTEM:-""}
+export DEVOPS_SYSTEM_HOME=${DEVOPS_SYSTEM_ROOT}/${DEVOPS_SYSTEM}
+check DEVOPS_SYSTEM_HOME ${DEVOPS_SYSTEM_ROOT}/${DEVOPS_SYSTEM}
+process ${DEVOPS_SYSTEM_HOME}/system.env
+
+
