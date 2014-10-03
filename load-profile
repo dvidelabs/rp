@@ -21,14 +21,42 @@ function raw_content
     cat $1 | sed '/^\s*$/d'| grep -v ^#
 }
 
+function reset_profile_args
+{
+    PROFILE_ROOT_ARG="{{ profile_root }}"
+    PROFILE_HOME_ARG="{{ profile_home }}"
+    PROFILE_ARG="{{ profile }}"
+}
+
+function reset_system_args
+{
+    SYSTEM_ROOT_ARG="{{ system_root }}"
+    SYSTEM_HOME_ARG="{{ system_home }}"
+    SYSTEM_ARG="{{ system }}"
+}
+
+# http://unix.stackexchange.com/a/129063
+# escaped_rhs=$(printf '%s\n' "$rhs" | sed 's:[\/&]:\\&:g;$!s/$/\\/')
+
 function expanded_content
 {
+
+    _pr=$(printf '%s\n' "$PROFILE_ROOT_ARG" | sed 's:[\/&]:\\&:g;$!s/$/\\/')
+    _ph=$(printf '%s\n' "$PROFILE_HOME_ARG" | sed 's:[\/&]:\\&:g;$!s/$/\\/')
+    _p=$(printf '%s\n' "$PROFILE_ARG" | sed 's:[\/&]:\\&:g;$!s/$/\\/')
+    _sr=$(printf '%s\n' "$SYSTEM_ROOT_ARG" | sed 's:[\/&]:\\&:g;$!s/$/\\/')
+    _sh=$(printf '%s\n' "$SYSTEM_HOME_ARG" | sed 's:[\/&]:\\&:g;$!s/$/\\/')
+    _s=$(printf '%s\n' "$SYSTEM_ARG" | sed 's:[\/&]:\\&:g;$!s/$/\\/')
     cat $1 \
-     | sed 's/{{[[:blank:]]*profile_home[[:blank:]]*}}/_profile_hometest_/'  \
-     | sed 's/{{[[:blank:]]*/[[/' \
-     | sed 's/[[:blank:]]*}}/]]/' \
+     | sed "s/{{[[:blank:]]*profile_root[[:blank:]]*}}/${_pr}/"  \
+     | sed "s/{{[[:blank:]]*profile_home[[:blank:]]*}}/${_ph}/"  \
+     | sed "s/{{[[:blank:]]*profile[[:blank:]]*}}/${_p}/"  \
+     | sed "s/{{[[:blank:]]*system_root[[:blank:]]*}}/${_sr}/"  \
+     | sed "s/{{[[:blank:]]*system_home[[:blank:]]*}}/${_sh}/"  \
+     | sed "s/{{[[:blank:]]*system[[:blank:]]*}}/${_s}/"  \
      | sed '/^[[:blank:]]*$/d' \
-     | sed '/^[[:blank:]]*#.*/d'
+     | sed '/^[[:blank:]]*#.*/d' \
+     | sed 's/[ \t]*$//'
 }  
 
 function content
@@ -138,8 +166,12 @@ unset DEVOPS_SYSTEM_ROOT
 unset DEVOPS_SYSTEM_HOME
 unset DEVOPS_SYSTEM
 
+reset_profile_args
+reset_system_args
+
 OVERRIDE_DEVOPS_PROFILE_ROOT=${OVERRIDE_DEVOPS_PROFILE_ROOT:-${HOME}/.devops/profiles}
 check DEVOPS_PROFILE_ROOT ${OVERRIDE_DEVOPS_PROFILE_ROOT}
+PROFILE_ROOT_ARG=${OVERRIDE_DEVOPS_PROFILE_ROOT}
 process "${OVERRIDE_DEVOPS_PROFILE_ROOT}/common_profile.env"
 
 [ -z "$DEVOPS_SYSTEM" ] || echo >&2 "warning: DEVOPS_SYSTEM cannot be set in 'common_profile.env'"
@@ -155,7 +187,8 @@ sep=""
 [ -z "$OVERRIDE_DEVOPS_PROFILE" ] || sep="/"
 OVERRIDE_DEVOPS_PROFILE_HOME=${OVERRIDE_DEVOPS_PROFILE_ROOT}${sep}${OVERRIDE_DEVOPS_PROFILE}
 check DEVOPS_PROFILE_HOME ${OVERRIDE_DEVOPS_PROFILE_HOME}
-
+PROFILE_HOME_ARG=${OVERRIDE_DEVOPS_PROFILE_HOME}
+PROFILE_ARG=${OVERRIDE_DEVOPS_PROFILE}
 process "${OVERRIDE_DEVOPS_PROFILE_HOME}/profile.env"
 
 [ -z "$DEVOPS_PROFILE_ROOT" ] || echo >&2 "warning: DEVOPS_PROFILE_ROOT cannot be set in 'profile.env'"
@@ -165,9 +198,12 @@ OVERRIDE_DEVOPS_SYSTEM=${OVERRIDE_DEVOPS_SYSTEM:-${DEVOPS_SYSTEM}}
 unset DEVOPS_SYSTEM_ROOT
 unset DEVOPS_SYSTEM
 
+# profile args are decoupled from system configuration directly
+reset_profile_args
 
 OVERRIDE_DEVOPS_SYSTEM_ROOT=${OVERRIDE_DEVOPS_SYSTEM_ROOT:-$(pwd)/systems}
 check DEVOPS_SYSTEM_ROOT ${OVERRIDE_DEVOPS_SYSTEM_ROOT}
+SYSTEM_ROOT_ARG=${OVERRIDE_DEVOPS_SYSTEM_ROOT}
 process ${OVERRIDE_DEVOPS_SYSTEM_ROOT}/common_system.env
 
 [ -z "$DEVOPS_PROFILE" ] || echo >&2 "warning: DEVOPS_PROFILE cannot be set in 'common_system.env'"
@@ -184,6 +220,8 @@ sep=""
 trace "DEVOPS_PROFILE=${OVERRIDE_DEVOPS_PROFILE}"
 OVERRIDE_DEVOPS_SYSTEM_HOME=${OVERRIDE_DEVOPS_SYSTEM_ROOT}${sep}${OVERRIDE_DEVOPS_SYSTEM}
 check DEVOPS_SYSTEM_HOME ${OVERRIDE_DEVOPS_SYSTEM_HOME}
+SYSTEM_HOME_ARG=${OVERRIDE_DEVOPS_SYSTEM_HOME}
+SYSTEM_ARG=${OVERRIDE_DEVOPS_SYSTEM}
 process ${OVERRIDE_DEVOPS_SYSTEM_HOME}/system.env
 
 [ -z "$DEVOPS_PROFILE_ROOT" ] || echo >&2 "warning: DEVOPS_PROFILE_ROOT cannot be set in 'system.env'"

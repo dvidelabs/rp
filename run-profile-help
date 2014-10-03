@@ -406,6 +406,80 @@ to protect the system configuration. The "$@" is shell speak for
 passing the arguments from run to ansible-playbook.
 
 
+Evaluation Order
+----------------
+
+The following values are decided as .env files are being read
+and cannot be changed once decided. The table lists the places
+they can be defined, and the first place to set it, wins.
+
+    DEVOPS_PROFILE_ROOT    <env>
+    DEVOPS_PROFILE         <arg>, <env>, <common_profile.env>
+    DEVOPS_SYSTEM_ROOT     <env>, <common_profile.env>, <profile.env>
+    DEVOPS_SYSTEM          <arg>, <env>, <all other env files>
+
+Where <env> is the existing shell environment and <arg> is a command
+line option given the 'rp' tool, such as '--system=mystem'.
+
+To see have this works, use the debug facilities:
+
+    $ rp -d
+    $ rp -d -e
+
+Other values may be set repeatedly, and the last value will win,
+which gives predictability, but isn't very useful when looking up
+which profile or system to use.
+
+The behavior of other DEVOPS_ variables are reserved for future use.
+
+The values:
+
+    DEVOPS_PROFILE_HOME
+    DEVOPS_SYSTEM_HOME
+
+are derived from the above and can never be set.
+
+Note that:j;w
+
+    $ rp --system=online-services sh
+
+will start a new shell with the profiled environment. Therefore, if
+the 'rp' tool is used again, it will inherit the settings from the
+parent call, which can be very useful, but when it is not, the
+following example shows different ways to override settings:
+
+    $ unset DEVOPS_PROFILE_ROOT
+    $ DEVOPS_SYSTEM_ROOT=../staging rp --profile=test
+
+
+File Syntax
+-----------
+
+The file consists of blank lines, comments and key value pairs:
+
+    # Comment
+       # comment
+
+    Key=Value
+    sentence_1=More than { on e word
+    login_file={{ profile_home }}/login.sh
+
+Blank lines, and comments are ignored.
+Keys must start at the beginning of the line.
+
+Comments cannot appear on key=value lines - they would be part of
+the value. This allows for passwords containing special characters.
+
+Trailing space is stripped from values, but otherwise they can
+contain spaces and special characters. If you have a file name
+with a trailing space, or a password, you have to define your
+delimiter and strip it later, or store the value in a file.
+
+Template arguments are mustache and Jinja2 style. The convention
+is one space before and after keyword. Unsupported template
+arguments are passed through.
+
+
 Template Arguments
 ------------------
 
@@ -498,7 +572,7 @@ Default Command
 ---------------
 
 If no command argument is given, 'env' is called to dump the profiled
-environment.
+environment, unless an export option is given.
 
 In this way it is easy to find, say, a db password:
 
@@ -558,14 +632,12 @@ were no such file.
 The format is stripped for comments and blank lines and have exactly
 one blank line between sections.
 
-The following command will import the exported profile into the parent
-environment. This is not really the primary purpose, but it works.
+The section headers and blank lines can be stripped with:
 
-    source $(rp -e | grep -v '^\[')
+    $ rp -x
 
-Since this may be useful, the following flag will do the same:
-   
-    source $(rp -x)
+This is almost enough to use as a shell source file, but special
+characters are not escaped.
 
 Output can also be directed to a file with the -o option, and this
 option implies the -e, so we can have:
