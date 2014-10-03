@@ -23,6 +23,21 @@ options :
     --system  | -s <system>
             override DEVOPS_SYSTEM
 
+    --export  | -e
+            expands and exports .env files with '[<basename>]' as separator
+            (commands are not alloved)
+
+    --no-expand | -n
+            disables template expansion
+            implies -e
+
+    --no-headers | -x
+            disables section headers in export
+            implies -e
+        
+    --output  | -o <file>
+            implies -e but writes to specified file
+
     --force   | -f
             ignore missing directory errors
 
@@ -108,12 +123,19 @@ function help
 # we cannot use this directly - we must stop at a command and fail at unknown option
 # then collect the remains for the subcommand - but it is nice base.
 
+#TODO:
+echo >&2 "warning: option parsing not yet solid"
+
+OVERRIDE_DEVOPS_PROFILE=${DEVOPS_PROFILE}
+OVERRIDE_DEVOPS_SYSTEM=${DEVOPS_SYSTEM}
+
 STD_IN=0
 
 prefix=""
 key=""
 value=""
-while [ ! -z "$1" ]
+keyValue=$1
+while [ ! -z "$keyValue" ]
 do
   keyValue=$1
   case "${prefix}${keyValue}" in
@@ -121,22 +143,30 @@ do
     --help)             key="-H";     value=1;;
     -p=*|--profile=*)   key="-p";     value="${keyValue#*=}";;
     -s=*|--system=*)    key="-s";     value="${keyValue#*=}";;
+    -o=*|--output=*)    key="-o";     value="${keyValue#*=}";;
     -d|--debug)         key="-d";     value=1;;
+    -e|--export)        key="-e";     value=1;;
+    -n|--no-expand)     key="-n";     value=1;;
+    -x|--no-headers)    key="-x";     value=1;;
     -f|--force)         key="-f";     value=1;;
     -|--stdin)          key="-";      value=1;;
     --) shift; break;;
-    -*) fail "error: bad option: $1";;
+    -*) fail "error: bad option: $1";; # TODO: likely wrong value displayed in some cases
     *) break;; 
   esac
   shift
   case $key in
     -h) short_help; exit 0;;
     -H) help; exit 0;;
-    -p) export DEVOPS_PROFILE="${value}";         prefix=""; key="";;
-    -s) export DEVOPS_SYSTEM="${value}";          prefix=""; key="";;
-    -d) export DEVOPS_DEBUG="${value}";           prefix=""; key="";;
-    -f) export DEVOPS_FORCE="${value}";           prefix=""; key="";;
-    -)  STD_IN=${value};                          prefix=""; key="";; 
+    -p) OVERRIDE_DEVOPS_PROFILE="${value}"; prefix=""; key="";;
+    -s) OVERRIDE_DEVOPS_SYSTEM="${value}"; prefix=""; key="";;
+    -d) DEVOPS_DEBUG="${value}"; prefix=""; key="";;
+    -e) DEVOPS_EXPORT="${value}"; prefix=""; key="";;
+    -o) DEVOPS_OUTPUT="${value}"; DEVOPS_EXPORT=1; prefix=""; key="";;
+    -n) DEVOPS_NOEXPAND="${value}"; DEVOPS_EXPORT=1; prefix=""; key="";;
+    -x) DEVOPS_NOHEADERS="${value}"; DEVOPS_EXPORT=1; prefix=""; key="";;
+    -f) DEVOPS_FORCE="${value}"; prefix=""; key="";;
+    -)  STD_IN=${value}; prefix=""; key="";; 
     *)  prefix="${keyValue}=";;
   esac
 done
@@ -150,7 +180,11 @@ fi
 if [ -z "$1" ]; then
     CMD=env
 else
-    CMD=$@
+    if [ ! $DEVOPS_EXPORT ]; then
+        CMD=$@
+    else
+        fail "command not allowed with any export option: $1"
+    fi
 fi
 
 # http://stackoverflow.com/questions/592620/how-to-check-if-a-program-exists-from-a-bash-script
@@ -158,10 +192,9 @@ fi
 command -v $1 >/dev/null 2>&1 || fail "error: command not found: $1"
 
 
-# TEST CODE  /  INCOMPLETE CODE
-
 source `dirname $0`/load-profile
 
-echo test: ec2 ini path: ${EC2_INI_PATH}
-$CMD
+if [ ! $DEVOPS_EXPORT ]; then
+    $CMD
+fi
 
