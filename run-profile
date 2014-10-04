@@ -1,13 +1,61 @@
 #! /bin/sh
 
+# ----------------------------------------------------------------------
+# dev_ops run_profile tool 'rp' (c) 2014, Mikkel Fahnøe Jørgensen,
+# mikkel@dvide.com License: MIT
+# ----------------------------------------------------------------------
+#
+# Loads environment key/values from multiple sources and runs a tool of
+# choice within the isolated environment of that tool. It also provides
+# a structure for storing specific files such as SSH keys that differ in
+# different scenarios (different profiles and systems).
+#
+# The tool is intended to load access and encryption keys into a devops
+# tool like Ansible, cloud host provider libraries such as python boto
+# for AWS, or simply to use ssh more conveniently on multiple different
+# host systems.
+#
+# It is especially useful to help separate system configuration from
+# user specific configuration where only the system configuration is
+# under shared source control, and it makes it easy to switch between
+# heterogenous systems such as multiple cloud hosting providers, or
+# datacenters.
+# 
+# This tool is no way tied to any particular other tool, but to
+# exemplify: Ansible easily handles different setups, but, assuming the
+# playbook rules are written as generic as possible, it still needs to
+# be told which configuration to use, and then have the right access
+# keys to do the job.
+#
+# See 'rp --help' for brief description or 'rp --doc' for detailed
+# description.
+
+
+# TODO:
+#
+# add DEVOPS_PROFILE_LOCK and DEVOPS_SYSTEM_LOCK
+# If either value is set, they must both be set and match.
+#
+# Examples could be:
+# DEVOPS_PROFILE_LOCK=megacorp-aws-eu-west-2014-09-alpha-0.0.4
+# DEVOPS_PROFILE_LOCK=98bdb4c8f5e014dfca6b1640c894f9c3
+#
+# it cannot be read from the environment or from the command line.  It
+# is not secret, or safe, it mere avoids unintentional mismatches.
+#
+# It can also be used to quickly disable all profiles centrally until
+# further action can be taken by updating the DEVOPS_SYSTEM_LOCK.
+#
+# Semantic versioning with softer match rules may also be worth
+# considering, but probably overkill.
+#
+# --force can be used to override.
+
 name=$(basename $0)
 
-
-# ops list_instances -H ID -f "tag-name:test"
-function usage
-{
-    echo "Usage : ${name} [-options] [<command> [<args> ...]]"
-    echo "      : ${name} --help | -h"
+function usage {
+    echo "Usage: ${name} [-options] [<command> [<args> ...]]"
+    echo "     : ${name} --help | -h"
     echo ""
     echo "    <command> : system command or shell script, defaults to 'env'"
     echo "    <args>    : arbitrary arguments to <command>"
@@ -15,46 +63,44 @@ function usage
     echo "Runs command with a given environment profile."
 cat <<EOF
 
-options :
+Options:
 
-    --profile | -p <profile>
+    -p | --profile[=]<profile>
             override DEVOPS_PROFILE
 
-    --system  | -s <system>
+    -s | --system[=]<system>
             override DEVOPS_SYSTEM
 
-    --export  | -e
+    -e | --export
             expands and exports .env files with '[<basename>]' as separator
             (commands are not alloved)
 
-    --no-expand | -n
+    -n | --no-expand
             disables template expansion
             implies -e
 
-    --no-headers | -x
+    -x | --no-headers
             disables section headers in export
             implies -e
         
-    --output  | -o <file>
+    -o | --output[=]<file> 
             implies -e but writes to specified file
 
-    --force   | -f
+    -f | --force
             ignore missing directory errors
 
-    --debug   | -d
+    -v | --verbose
             debug information
 
-    -h
+    -h | --help
             brief help message
 
-    --help
+    -d | --doc
             a long version of the help message
 EOF
 }
 
-
-function brief
-{
+function brief {
 usage
 cat <<EOF
 
@@ -100,24 +146,411 @@ which may be used to locate other configuration files.
 EOF
 }
 
-function short_help
-{
+function help {
     echo "$(brief)\n\nMore help with: ${name} --help"
     exit 0
 }
 
-function fail
-{
+function fail {
     usage >&2 
     echo $1 >&2
     exit $E_BAD_ARGS
 }
 
-function help
-{
+function document {
     echo "$(brief)\n\n\n" | cat - $(dirname $0)/run-profile-help 
     exit 0
 }
+
+
+
+# ----------------------------------------------------------------------
+# opt_in option pre-parser
+# library (c) 2014, mikkel@dvide.comLicense:
+# MIT
+# ----------------------------------------------------------------------
+
+# ---------------------------------------------------------------------- Feel
+# free to embed and drop comments in production code, but consider adding a
+# public repo link to full source - it is supposed to be small, practical, and
+# reuseable.
+#
+# A small option pre-parser library that allows reasonably complex long options
+# without using non-portable getops features, or getopts at all.
+#
+# inspired by http://stackoverflow.com/a/5255468
+# http://mywiki.wooledge.org/BashFAQ/035 and others
+#
+# There are many suggestions for small simple option parsers in online forums,
+# some of which have inspired this one with many good ideas, but all have been
+# broken in some cases either due to bugs, or difficulty in adaptation without
+# breaking parser state, or just failing to handle escapes properly, or in some
+# cases being deliberately simplistic. The supposedly standard builtin getops
+# parser is only standardized on a limited feature set - but may be quite
+# suitable after preparsing with this library, though not really needed. Other
+# libraries libraries are a bit over the top in terms if size, when just
+# rolling a quick new script.
+#
+# Here we provide a small set of functions to do option parsing.  It works as a
+# two pass solution where the first pass reads as an executable lexer syntax,
+# and the second pass is completely independent of this library, but can focus
+# on a much simpler syntax with no concern for syntax errors. The first pass is
+# thus an option that can be added later when the script has been worked out.
+#
+# Options such as the following are allowed, provided they are given in
+# the first pass spec.:
+#
+#  -s"x" -p\ y -m=42 - --bar "" --foo="   spacy " a=\'2 b'\\x' --help -- word
+#
+# but it is easy to disable or enable individual short and long formats.
+# Note that we do not require the option prefix, although it is
+# convention. The above expands to (assuming the rules are defined as
+# intuition would suggest):
+#
+# -s "x" -p " y" -m "42" - -b "" -f "   spacy " -a "\'2" -b "\\x" -h -- "word"
+#
+# Most of the above quoting and escapes will disappear once the argument list
+# in the resulting $OPT_ARGS has been injected into the main argument list with:
+#
+# eval set -- $OPT_ARGS
+#
+# The same option may appear multiple times in the rule spec for the first
+# pass.  Some users may dislike this feature, but it allows for a simple
+# specification and very granular control over what syntax variations short and
+# long options support.
+#
+# Currently handles double quotes and backslash escapes, and handles single
+# quotes like any other symbol.
+#
+# Caveats: does not handle runs of short options like -czf <file> but getopts
+# will do that in the second pass if needed.
+#
+# Be aware that arguments may be empty or blank, but still present, e.g.
+# '-o ""' is possible, and a first pass rule such as: '--output=*) opt_kv -o;;'
+# will be accepted and result in '-o ""' in the second pass.
+#
+# You can start building the interface around the second pass of trivial
+# options, and later use opt_in to extend the alternative option forms and
+# provide error checking.
+# ----------------------------------------------------------------------
+
+# ----------------------------------------------------------------------
+# Usage:
+#
+# # optionally override opt_user_fail
+# This first pass is not required for the second pass to work
+# on simple input.
+# opt_in
+# for arg
+# do
+#   if opt_next $arg; then
+#   case arg
+#     # flag option:
+#     -v | --verbose) opt_f -v;;
+#
+#     # expect-value option:
+#     # -o <filename> | --output <filename>
+#     # the value token (here <filename> must be captured in another
+#     # positinal rule using opt_pos and it will remember the pending
+#     # option to disable a lingering missing value error. opt_out
+#     # does the final missing value check.
+#     -o | --output) opt_ev -o;;
+#     
+#     # value option, only for short options
+#     # -O1
+#     # -O would yield an invalid option, or handled elsewhere.
+#     -O*) opt_v -O;;
+#
+#     # keyword option - either empty, or followed by value:
+#     # we choose to forward as -O, but could also pass opt_v OPTIMIZE
+#     O) opt_v -O
+#     # or O) opt_ev -O
+#
+#     # key-value option, allows for empty values
+#     # -o=log.txt | --output=log.txt | -o= | --output=
+#     -o=* | --output=*) opt_kv -o;;
+#
+#     # nothing special about conventional stdin argument
+#     -) opt_f -;;
+#
+#     # -- is just convention, but split flags that opt_next should just
+#     # consume all the following tokens as quoted values.
+#     # we can count and call opt_resume to reenter option parsing,
+#     # or otherwise custom analyze the stream.
+#     --) opt_split --;;
+#
+#     # we don't have to capture unknown options, but usually it is
+#     # a good idea. When split is called, we drop out of this loop
+#     # and are able to consume all tokens.
+#     -*) opt_bad;;
+#    
+#     # catch all - intended for second argument to opt_ev tokens,
+#     # see above. It also detects if no value is expected and
+#     # terminates the option parsing similar to opt_split.
+#     # this would e.g. by the filename list following options to 'ls'.
+#     *) opt_pos;;
+#
+#     # We can use opt_pos with other patterns and might want to call
+#     # resume to resume option parsing. The following would have to
+#     # be moved up above the catch all *) pattern.
+#     # keyword1 | keyword2) opt_pos; opt_resume; 
+#
+#     # OWN PATTERN HERE
+#     # you can easily add your own option type, you just write a new
+#     # parser function opt_user_foov, match the token pattern by using
+#     # opt_kv as an example.
+#     # foobar+=*) opt_user_foov --delta;;
+#     # or as an expected value in next token, using opt_ev as a base.
+#     # foobar!=) opt_user_fooev --delta;;  
+#   esac
+# done
+# clean up and return result in OPT_ARGS:
+# opt_out
+# update the argument list:
+# eval set -- $OPT_ARGS;
+#
+# ----------------------------------------------------------------------
+# This scond pass does NOT depend on opt_in, and can be developed before
+# the first pass. This is just one possible way to do it.
+# All options are short and simple: -o <file> -v -f -h -- <command> ...
+#
+# unset MY_OUTPUT; unset MY_VERBOSE;
+# for arg
+# do
+#   case arg
+#     # perhaps also test for empty value from -o ""
+#     -o) MY_OUTPUT=$2; shift;; 
+#     -v) MY_VERBOSE=1;;
+#     kw1) MY_KW1;;
+#     # ...
+#     --) shift; break;; *) break;;
+#   esac
+#   shift
+# done
+# # $@ now holds extra positional args, if second pass handled all values correctly.
+#
+# ----------------------------------------------------------------------
+
+
+# TODO: _opt_allow handles multiple short options, we have no implemention for that yet.
+
+# Override this function as needed before calling opt_in.
+# Possible 'reason' values: "missing-option" | "bad-option".
+function opt_user_fail { reason=$1; msg=$2; name=$3; echo >&2 "$msg $name"; exit $E_BAD_ARGS; }
+
+# Error functions hooks into user supplied opt_user_fail which may
+# resume parsing and ignore errors, or inject tokens.
+function opt_bad { opt_user_fail "bad-option" $_opt_token "error: unexpected option: "; }
+function opt_missing { opt_user_fail "missing-option" $_opt_expect "error: option expected a value: "; }
+
+# Parsing output: builds a new commandlines in "args", expect the original $@ _opt_tokens to be set
+# one at a time and called with the appropriate parser interface function.
+function _opt_esc() { echo "escaping: ($1)"
+_opt_qv=${1//\\/\\\\}; _opt_qv=${_opt_qv//"/\\"}; _opt_qv=${_opt_qv//'/\\'}; _opt_qv="\"${_opt_qv}\"";
+echo "escaped: ($_opt_qv)"; }
+function _opt_put { echo "put $1 ($opt_expect)"; [ -n "$_opt_expect" ] && opt_missing || _opt_args="${_opt_args}$1 $2"; }
+function _opt_put_pos { _opt_args="${_opt_args}$1 "; [ -n "$_opt_expect" ] || _opt_brk=1; unset _opt_expect; _opt_allow=0; }
+function _opt_put_vopt { _opt_esc $2; _opt_put $1 "$_opt_qv "; _opt_allow=0; }
+
+
+# Comments are just examples:
+
+# key-value option: -o=<outfile> | --output=<outfile> (splits into -o "<outfile>")
+function opt_kv { echo "kv -$1, "; _opt_put_vopt $1 ${_opt_token#*=}; }
+
+# expect-value option: -o <outfile> | --ouput <outfile>
+# (consume -o, expects next token to be <outfile>) the next token must be
+# matched such that it reach opt_pos, or is ignored with opt_resume.
+function opt_ev { echo "e -$1, "; _opt_put $1; _opt_expect=$_opt_token; }
+
+# value option: -o<outfile> (splits into -o "<outfile>" with proper escapes.
+function opt_v { echo "v -$1 ($_opt_token), "; _opt_put_vopt $1 ${_opt_token:2}; }
+
+# flag option: -v | --verbose
+function opt_f { echo "o -$1, "; _opt_put $1; _opt_allow=1; }
+
+# postional value: <filename> | <command> | ...
+# Either an expected value following opt_ev, and otherwise a call to opt_pos
+# will break token parsing and pass on values until opt_resume is found, or
+# opt_out stops the processing.
+function opt_pos { echo "p, "; [ -z "$_opt_expect" ] && _opt_brk=1 && echo "brk"; _opt_esc $_opt_token; _opt_put_pos $_opt_qv; }
+
+# -- breaks option parsing, but is passed on, anything after is passed to opt_pos
+# but it does not have to --, it could be a keyword
+function opt_split { opt_f $1; _opt_brk=1; }
+
+# All options have 0 or 1 expected arguments. After that option parsing is
+# terminated extra non-option _opt_tokens are copied verbatim with opt_pos. It
+# is possible to resume _opt_token parsing manually, for example after a count,
+# by flagging resumopt_ev which takes no argument.
+function opt_resume { _opt_brk=0; }
+
+# Assigns the token to be parse and # consumes tokens automatically
+# if the _opt_brk flag has been set.
+function opt_next { _opt_token=$1; if [ $_opt_brk -eq 0 ]; then return 0; else opt_pos; return 1; fi; }
+
+function opt_debug { echo >&2 "opt: token='$_opt_token'"; }
+
+# Initialize before calling any other parse functions.
+function opt_in {
+    _opt_args=""; _opt_token=""; _opt_qv="";
+    _opt_allow=0; _opt_brk=0; unset _opt_expect;
+    unset OPT_ARGS;
+}
+
+# Replace the original command line options with the translated verions,
+# ready for the second pass, and clear all state.
+# call '. $OPT_ARGS_REPLACE' after opt_out to replace argument list
+# or use $OPT_ARGS with getopts etc.
+function opt_out { 
+    [ -z "$_opt_expect" ] || opt_missing;
+    OPT_ARGS=$_opt_args;
+    unset _opt_args; unset _opt_token; unset _opt_qv;
+    unset _opt_allow; unset _opt_brk; unset _opt_expect;
+}
+
+# Execute this to update main argument list with translated result:
+# (cannot be inside a function unless args are processed there)
+# eval set -- $OPT_ARGS;
+
+# ----------------------------------------------------------------------
+# end opt_in library
+# ----------------------------------------------------------------------
+
+
+# customize opt_in error handler
+function opt_user_fail {
+    reason=$1; name=$2; msg=$3;
+    fail "$msg $name"
+}
+
+opt_in
+
+# parser driver: This is like a lex grammar, it is customized, but keept it concise.
+for arg
+do
+    # else branch collects args after last option
+    if opt_next $arg; then
+    case "$arg" in
+       # TODO: it won't work, we need to parse this in opt_pos
+       #d|e|f|h|n|v|x) moropt_ev;;
+
+       -d|--doc) opt_f -d;;
+       -e|--export) opt_f -e;;
+       -f|--force) opt_f -f;;
+       -h|--help) opt_f -h;;
+       -n|--no-headers) opt_f -n;;
+       -v|--verbose) opt_f -v;; 
+       -x|--no-expand) opt_f -x;;
+
+       -o|--output) opt_ev -o;;
+       -p|--profile) opt_ev -p;;
+       -s|--system) opt_ev -s;;
+
+       # may also hold empty accepted value
+       -o=*|--output=*) opt_kv -o;;
+       -p=*|--profile=*) opt_kv -p;;
+       -s=*|--system=*) opt_kv -s;;
+
+       -o*) opt_v -o;;
+       -p*) opt_v -p;;
+       -s*) opt_v -s;;
+
+       # enable these if needed, otherwise they will fail as unpexected
+       --) opt_split --;; 
+       #-) opt_f -;
+
+       -*) opt_bad;;
+       # pass on all other values - these are values, or post option arguments
+       # may also pass a quoted empty value
+       *) opt_pos;; 
+    esac
+    fi
+done
+
+echo "args before long translation:\n$@"
+echo "args string after translation:\n$_opt_args"
+opt_out
+eval "set -- $OPT_ARGS"
+
+# put the translated arguments back on the input
+echo "args after long translation:\n$@"
+exit
+
+# Now do a program specific parse.
+# The follwoing will work without the former, but only
+# for simple short options like:
+#
+#    $ rp -h -o <filename> -e -s <system> -p <profiile>
+#
+# We still keep it tight and keep application logic out, except
+# handling implied options. We allow for empty value detection.
+
+
+# Reset all variables that might be set
+
+e_arg=0
+f_arg=0
+n_arg=0
+v_arg=0
+x_arg=0
+o_arg=0
+p_arg=0
+s_arg=0
+
+o_val=""
+p_val=""
+s_val=""
+
+# STDIN (-)
+stdin_arg=0
+# (--) split operator
+split_arg=0
+# not option argument seen
+cmd_arg=0
+
+while [ -n "$1" ]
+do
+    echo "parsing opts"
+    case $1 in
+        -d)  document;;
+        -e)  e_arg=1;;
+        -f)  f_arg=1;;
+        -h)  help;;
+        -n)  n_arg=1; e_arg=1;;
+        -v)  v_arg=1;;
+        -x)  x_arg=1; e_arg=1;;
+        -o)  o_arg=1; o_val=$2; shift;;
+        -p)  p_arg=1; p_val=$2; shift;;
+        -s)  s_arg=1; s_val=$2; shift;;
+        -)   stdin_arg=1;;
+        --)  split_arg=1; shift; break;;
+        *) cmd_arg=1; break;;
+    esac
+    shift
+done
+
+echo "args left: $@"
+echo "done testing args"
+echo "system: $sarg"
+exit
+
+# Now the options are fully parsed and the input
+# arguments that remain will start with $1.
+# cmd_arg will have been set if we got any
+# and split_arg will have been set if -- was used.
+
+# Finally pass on the values to application logic.
+
+# TODO: deal with empty values for p, s, and o args.
+OVERRIDE_DEVOPS_PROFILE=$p_arg
+OVERRIDE_DEVOPS_SYSTEM=$s_arg
+DEVOPS_DEBUG=$v_arg
+DEVOPS_EXPORT=$e_arg
+DEVOPS_OUTPUT=$o_val
+DEVOPS_NOEXPAND=$n_arg
+DEVOPS_NOHEADERS=$x_arg
+DEVOPS_FORCE=$f_arg
 
 # parse args : http://stackoverflow.com/a/24121652
 # we cannot use this directly - we must stop at a command and fail at unknown option
@@ -128,53 +561,49 @@ echo >&2 "warning: option parsing not yet solid"
 
 OVERRIDE_DEVOPS_PROFILE=${DEVOPS_PROFILE}
 OVERRIDE_DEVOPS_SYSTEM=${DEVOPS_SYSTEM}
+# 
+# STD_IN=0
+# 
+# prefix=""
+# key=""
+# value=""
+# keyValue=$1
+# while [ ! -z "$keyValue" ]
+# do
+#   keyValue=$1
+#   case "${prefix}${keyValue}" in
+#     -h)                 key="-h";     value=1;;
+#     --help)             key="-H";     value=1;;
+#     -p=*|--profile=*)   key="-p";     value="${keyValue#*=}";;
+#     -s=*|--system=*)    key="-s";     value="${keyValue#*=}";;
+#     -o=*|--output=*)    key="-o";     value="${keyValue#*=}";;
+#     -d|--debug)         key="-d";     value=1;;
+#     -e|--export)        key="-e";     value=1;;
+#     -n|--no-expand)     key="-n";     value=1;;
+#     -x|--no-headers)    key="-x";     value=1;;
+#     -f|--force)         key="-f";     value=1;;
+#     -|--stdin)          key="-";      value=1;;
+#     --) shift; break;;
+#     -*) fail "error: bad option: $1";; # TODO: likely wrong value displayed in some cases
+#     *) break;; 
+#   esac
+#   shift
+#   case $key in
+#     -h) help; exit 0;;
+#     -H) document; exit 0;;
+#     -p) OVERRIDE_DEVOPS_PROFILE="${value}"; prefix=""; key="";;
+#     -s) OVERRIDE_DEVOPS_SYSTEM="${value}"; prefix=""; key="";;
+#     -d) DEVOPS_DEBUG="${value}"; prefix=""; key="";;
+#     -e) DEVOPS_EXPORT="${value}"; prefix=""; key="";;
+#     -o) DEVOPS_OUTPUT="${value}"; DEVOPS_EXPORT=1; prefix=""; key="";;
+#     -n) DEVOPS_NOEXPAND="${value}"; DEVOPS_EXPORT=1; prefix=""; key="";;
+#     -x) DEVOPS_NOHEADERS="${value}"; DEVOPS_EXPORT=1; prefix=""; key="";;
+#     -f) DEVOPS_FORCE="${value}"; prefix=""; key="";;
+#     -)  STD_IN=${value}; prefix=""; key="";; 
+#     *)  prefix="${keyValue}=";;
+#   esac
+# done
 
-STD_IN=0
-
-prefix=""
-key=""
-value=""
-keyValue=$1
-while [ ! -z "$keyValue" ]
-do
-  keyValue=$1
-  case "${prefix}${keyValue}" in
-    -h)                 key="-h";     value=1;;
-    --help)             key="-H";     value=1;;
-    -p=*|--profile=*)   key="-p";     value="${keyValue#*=}";;
-    -s=*|--system=*)    key="-s";     value="${keyValue#*=}";;
-    -o=*|--output=*)    key="-o";     value="${keyValue#*=}";;
-    -d|--debug)         key="-d";     value=1;;
-    -e|--export)        key="-e";     value=1;;
-    -n|--no-expand)     key="-n";     value=1;;
-    -x|--no-headers)    key="-x";     value=1;;
-    -f|--force)         key="-f";     value=1;;
-    -|--stdin)          key="-";      value=1;;
-    --) shift; break;;
-    -*) fail "error: bad option: $1";; # TODO: likely wrong value displayed in some cases
-    *) break;; 
-  esac
-  shift
-  case $key in
-    -h) short_help; exit 0;;
-    -H) help; exit 0;;
-    -p) OVERRIDE_DEVOPS_PROFILE="${value}"; prefix=""; key="";;
-    -s) OVERRIDE_DEVOPS_SYSTEM="${value}"; prefix=""; key="";;
-    -d) DEVOPS_DEBUG="${value}"; prefix=""; key="";;
-    -e) DEVOPS_EXPORT="${value}"; prefix=""; key="";;
-    -o) DEVOPS_OUTPUT="${value}"; DEVOPS_EXPORT=1; prefix=""; key="";;
-    -n) DEVOPS_NOEXPAND="${value}"; DEVOPS_EXPORT=1; prefix=""; key="";;
-    -x) DEVOPS_NOHEADERS="${value}"; DEVOPS_EXPORT=1; prefix=""; key="";;
-    -f) DEVOPS_FORCE="${value}"; prefix=""; key="";;
-    -)  STD_IN=${value}; prefix=""; key="";; 
-    *)  prefix="${keyValue}=";;
-  esac
-done
-
-# we don't really need it, but nice to have parsed, just in case
-if [ $STD_IN != 0 ]; then
-    fail "error: bad option '-' (stdin)"
-fi
 
 # missing command, or unknown option
 if [ -z "$1" ]; then
