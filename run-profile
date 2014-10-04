@@ -240,6 +240,7 @@ function document {
 # # optionally override opt_user_fail
 # This first pass is not required for the second pass to work
 # on simple input.
+#
 # opt_in
 # for arg
 # do
@@ -340,7 +341,7 @@ function document {
 
 # Override this function as needed before calling opt_in.
 # Possible 'reason' values: "missing-option" | "bad-option".
-function opt_user_fail { reason=$1; msg=$2; name=$3; echo >&2 "$msg $name"; exit $E_BAD_ARGS; }
+function opt_user_fail { reason="$1"; msg="$2"; name="$3"; echo >&2 "$msg $name"; exit $E_BAD_ARGS; }
 
 # Error functions hooks into user supplied opt_user_fail which may
 # resume parsing and ignore errors, or inject tokens.
@@ -354,24 +355,24 @@ _opt_qv="${1//\\/\\\\}"; _opt_qv="${_opt_qv//"/\\"}"; _opt_qv="${_opt_qv//'/\\'}
 echo "escaped: ($_opt_qv)"; }
 function _opt_put { echo "put $1 ($opt_expect)"; [ -n "$_opt_expect" ] && opt_missing || _opt_args="${_opt_args}$1 $2"; }
 function _opt_put_pos { _opt_args="${_opt_args}$1 "; [ -n "$_opt_expect" ] || _opt_brk=1; unset _opt_expect; _opt_allow=0; }
-function _opt_put_vopt { _opt_esc "$2"; _opt_put $1 "$_opt_qv "; _opt_allow=0; }
+function _opt_put_vopt { _opt_esc "$2"; _opt_put "$1" "$_opt_qv "; _opt_allow=0; }
 
 
 # Comments are just examples:
 
 # key-value option: -o=<outfile> | --output=<outfile> (splits into -o "<outfile>")
-function opt_kv { echo "kv -$1, "; _opt_put_vopt $1 ${_opt_token#*=}; }
+function opt_kv { echo "kv -$1, "; _opt_put_vopt "$1" "${_opt_token#*=}"; }
 
 # expect-value option: -o <outfile> | --ouput <outfile>
 # (consume -o, expects next token to be <outfile>) the next token must be
 # matched such that it reach opt_pos, or is ignored with opt_resume.
-function opt_ev { echo "e -$1, "; _opt_put $1; _opt_expect=$_opt_token; }
+function opt_ev { echo "e -$1, "; _opt_put "$1" _opt_expect="$_opt_token"; }
 
 # value option: -o<outfile> (splits into -o "<outfile>" with proper escapes.
-function opt_v { echo "v -$1 ($_opt_token), "; _opt_put_vopt $1 ${_opt_token:2}; }
+function opt_v { echo "v -$1 ($_opt_token), "; _opt_put_vopt "$1" "${_opt_token:2}"; }
 
 # flag option: -v | --verbose
-function opt_f { echo "o -$1, "; _opt_put $1; _opt_allow=1; }
+function opt_f { echo "o -$1, "; _opt_put "$1"; _opt_allow=1; }
 
 # postional value: <filename> | <command> | ...
 # Either an expected value following opt_ev, and otherwise a call to opt_pos
@@ -381,7 +382,7 @@ function opt_pos { echo "p, "; [ -z "$_opt_expect" ] && _opt_brk=1 && echo "brk"
 
 # -- breaks option parsing, but is passed on, anything after is passed to opt_pos
 # but it does not have to --, it could be a keyword
-function opt_split { opt_f $1; _opt_brk=1; }
+function opt_split { opt_f "$1"; _opt_brk=1; }
 
 # All options have 0 or 1 expected arguments. After that option parsing is
 # terminated extra non-option _opt_tokens are copied verbatim with opt_pos. It
@@ -414,6 +415,7 @@ function opt_out {
     unset _opt_args; unset _opt_token; unset _opt_qv;
     unset _opt_allow; unset _opt_brk; unset _opt_expect;
 }
+
 
 # Execute this to update main argument list with translated result:
 # (cannot be inside a function unless args are processed there)
