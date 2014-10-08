@@ -154,7 +154,7 @@ function help {
 function fail {
     usage >&2 
     echo $1 >&2
-    exit $E_BAD_ARGS
+    exit 1; 
 }
 
 function document {
@@ -165,401 +165,61 @@ function document {
 
 
 # ----------------------------------------------------------------------
-# opt_in option pre-parser
-# library (c) 2014, mikkel@dvide.com
-# License: MIT
+# opt-in option pre-parser library, (c) 2014, Mikkel Fahnøe Jørgensen
+# Version: v0.1.0, License: MIT
 # ----------------------------------------------------------------------
-
-# ---------------------------------------------------------------------- Feel
-# free to embed and drop comments in production code, but consider adding a
-# public repo link to full source - it is supposed to be small, practical, and
-# reuseable.
-#
-# A small option pre-parser library that allows reasonably complex long options
-# without using non-portable getops features, or getopts at all.
-#
-# inspired by http://stackoverflow.com/a/5255468
-# http://mywiki.wooledge.org/BashFAQ/035 and others
-#
-# There are many suggestions for small simple option parsers in online forums,
-# some of which have inspired this one with many good ideas, but all have been
-# broken in some cases either due to bugs, or difficulty in adaptation without
-# breaking parser state, or just failing to handle escapes properly, or in some
-# cases being deliberately simplistic. The supposedly standard builtin getops
-# parser is only standardized on a limited feature set - but may be quite
-# suitable after preparsing with this library, though not really needed. Other
-# libraries libraries are a bit over the top in terms if size, when just
-# rolling a quick new script.
-#
-# Here we provide a small set of functions to do option parsing.  It works as a
-# two pass solution where the first pass reads as an executable lexer syntax,
-# and the second pass is completely independent of this library, but can focus
-# on a much simpler syntax with no concern for syntax errors. The first pass is
-# thus an option that can be added later when the script has been worked out.
-#
-# Options such as the following are allowed, provided they are given in
-# the first pass spec.:
-#
-#  -s"x" -p\ y -m=42 - --bar "" --foo="   spacy " a=\'2 b'\\x' --help -- word
-#
-# but it is easy to disable or enable individual short and long formats.
-# Note that we do not require the option prefix, although it is
-# convention. The above expands to (assuming the rules are defined as
-# intuition would suggest):
-#
-# -s "x" -p " y" -m "42" - -b "" -f "   spacy " -a "\'2" -b "\\x" -h -- "word"
-#
-# Most of the above quoting and escapes will disappear once the argument list
-# in the resulting $OPT_ARGS has been injected into the main argument list with:
-#
-# eval set -- $OPT_ARGS
-#
-# The same option may appear multiple times in the rule spec for the first
-# pass.  Some users may dislike this feature, but it allows for a simple
-# specification and very granular control over what syntax variations short and
-# long options support.
-#
-# Currently handles double quotes and backslash escapes, and handles single
-# quotes like any other symbol.
-#
-# Caveats: does not handle runs of short options like -czf <file> but getopts
-# will do that in the second pass if needed.
-#
-# Be aware that arguments may be empty or blank, but still present, e.g.
-# '-o ""' is possible, and a first pass rule such as: '--output=*) opt_kv -o;;'
-# will be accepted and result in '-o ""' in the second pass.
-#
-# You can start building the interface around the second pass of trivial
-# options, and later use opt_in to extend the alternative option forms and
-# provide error checking.
-# ----------------------------------------------------------------------
-
-# ----------------------------------------------------------------------
-# Usage:
-#
-# (It's really not that complicated, we just cover a lot of options here
-#  if you want something simpler, use the opt_in function as an example -
-#  that is often enough).
-#
-# # optionally override opt_user_fail
-# This first pass is not required for the second pass to work
-# on simple input.
-#
-# # init
-# opt_in
-# # opt_in takes some arguments.
-# silent : disable error handler and forward error and missing tokens
-# noisy  : the opposite: call default or custom fail function.
-# eager  : consume next promising option as a value if one is missing
-# strict : the opposite: produce an error and/or use default value.
-# invalid=foo : insert foo instead of '?' in front of invalid token stream
-# missing=42  : insert 42 instead of ':' when opt_ev has no alternative.
-#
-# # opt_in silent eager
-# # opt_in noisy strict
-#
-# optionally disable error handler, if not already done with
-# opt_in "silent".
-#
-# or customize user fail function args: (reason, name, msg)
-# if it returns, error tokens are forwarded like with silent.
-# if silent, this function is not called.
-# # function opt_user_fail { ... }
-#
-# for arg
-# do
-#   NOTE: it is very important to quote "$arg"
-#   if opt_next "$arg"; then
-#   case "$arg"
-#     # flag option:
-#     -v | --verbose) opt_f -v ;;
-#
-#     # expect-value option:
-#     # -o <filename> | --output <filename>
-#     # the value token (here <filename> must be captured in by the next
-#     # token using opt_pos, or a missing error will be generated.
-#     # The missing error will call opt_user_fail, then insert
-#     # ':' in place of the missing value.
-#     # positinal rule using opt_pos and it will remember the pending
-#     # option to disable a lingering missing value error. opt_out
-#     # does the final missing value check.
-#     -o | --output) opt_ev -o ;;
-#    
-#     # or insert a custom default value in the event of error.
-#     # This will still trigger opt_user_fail, but with reason="default-option".
-#     # -o | --output) opt_ev -o 'MISSING' ;;
-#
-#     # we can also customize, the missing value, but logically this task
-#     # belongs to the second pass:
-#     # -o | --output) opt_ev -o 'dump.txt' ;;
-#
-#     # value option, only for short options
-#     # -O1
-#     # -O would yield an invalid option, or handled elsewhere.
-#     -O*) opt_v -O ;;
-#
-#     # keyword option - either empty, or followed by value:
-#     # we choose to forward as -O, but could also pass opt_v OPTIMIZE
-#     O) opt_v -O
-#     # or O) opt_ev -O
-#
-#     # key-value option, allows for empty values
-#     # -o=log.txt | --output=log.txt | -o= | --output=
-#     -o=* | --output=*) opt_kv -o;;
-#
-#     # pass conventional stdin option on as a flag.
-#     -) opt_f - ;;
-#
-#     # -- is just convention marking start of non-option args.
-#     # unlike opt_pos, we still trigger missing option error
-#     --) opt_break --;;
-#
-#     # or, if not given an argument, it will strip the token
-#     # and enter non-option mode, still triggering missing
-#     # value errors. This may simplify 2nd pass.
-#     # --) opt_break ;;
-#
-#     # or forward to the token, triggering missing errors,
-#     # unlike opt_pos alone.
-#     # ---*) opt_break; opt_pos ;;
-#
-#     # call opt_user_fail, and insert '?' into token stream, then
-#     # break into non-option mode for the failing and remaining tokens.
-#     -*) opt_invalid '?' ;;
-#     
-#     # or just call the error handler without inserting anything
-#     # before the failing token, and break into non-option mode.
-#     # -*) opt_invalid ;;
-#
-#     # catch all - intended for second argument to opt_ev tokens,
-#     # see above. It also detects if no value is expected and
-#     # terminates the option parsing similar to opt_break.
-#     # this would e.g. by the filename list following options to 'ls'.
-#     *) opt_pos ;;
-#
-#     # or, mark the beginning of non-options getopt style:
-#     # (still require separate -- handling to avoid duplicates and errors)
-#     *) opt_pos -- ;;
-#
-#     # OWN PATTERN HERE
-#     # you can easily add your own option type, you just write a new
-#     # parser function opt_user_foov, match the token pattern by using
-#     # opt_kv as an example.
-#     # foobar+=*) opt_user_foo_v --delta;;
-#     # or as an expected value in next token, using opt_ev as a base.
-#     # foobar!=) opt_user_foo_ev --delta;;  
-#   esac
-#   else
-#     # implicit opt_pos has been called by opt_next
-#     # so this section is optional - but we can return to option
-#     # parsing from here, e.g. by counting, or detecting a keyword
-#     # as in this example:
-#   case "$arg"
-#     # We can use opt_pos with other patterns and might want to call
-#     # resume to resume option parsing. The following would have to
-#     # be moved up above the catch all *) pattern.
-#     keyword1 | keyword2) opt_pos; opt_resume ;;
-#
-#     # signal resumption of options after keywords:
-#     # keyword3) opt_resume; opt_f '__' ;;
-#   esac
-#   fi
-# done
-# clean up and return result in OPT_ARGS:
-# opt_out
-# update the argument list:
-# eval set -- $OPT_ARGS;
-#
-# ----------------------------------------------------------------------
-# This second pass does NOT depend on opt_in, and can be developed before
-# the first pass. This is just one possible way to do it.
-# All options are short and simple: -o <file> -v -f -h -- <command> ...
-#
-# unset MY_OUTPUT; unset MY_VERBOSE;
-# for arg
-# do
-#   case "$arg"
-#     # perhaps also test for empty value from -o ""
-#     -o) MY_OUTPUT=$2; shift;; 
-#     -v) MY_VERBOSE=1;;
-#     kw1) MY_KW1;;
-#     # ...
-#     --) shift; break;; *) break;;
-#   esac
-#   shift
-# done
-# # $@ now holds extra positional args, if second pass handled all values correctly.
-#
-# ----------------------------------------------------------------------
-
 function _opt_dbg { [ $_opt_dbg_enabled -ne 0 ] && echo "debug: $@"; }
-
-# Single quote strings are never escaped, but they can be concatenated with
-# double quoted strings. So we escape single quote by breaking up the string
-# and inserting a small double quoted string with a single single quote (sic).
-# Using double quotes for other content seems to end bad when using 
-# eval set -- OPT_ARGS, but single quotes appear to be sound so far.
-# e.g.: lima?:x'2\4
-# For example given command linen input token: \'"'\"lima?:\$x'2\\4"\ .
-# The token escapes as: ''"'"''"'"'"lima?:$x'"'"'2\4 .'
-# and after eval, prints as a single token: ''"lima?:$x'2\4 .
-# which is the expected value.
-# Using: "lim\!a" results in lim\!a in the in final printet output and unescaped
-# in double quotes, at least OSX FreeBSD Bash yields an event error,
-# but if '!' is given as input the output is the expected: !
-#
-# Conclustion: this is probably as good as it gets, but may fail spuriously on various
-# older shells.
-function _opt_esc { _opt_ping="'\"'\"'"; _opt_qv="${1//\'/$_opt_ping}"; _opt_qv="'${_opt_qv}'"; }
-
+function _opt_esc { _opt_ping="'\''"; _opt_qv="${1//\'/$_opt_ping}"; _opt_qv="'${_opt_qv}'"; }
 function _opt_push { _opt_dbg "pushing: $@";
     for _opt_i; do _opt_esc "$_opt_i"; _opt_args="${_opt_args}${_opt_qv} "; done; } 
-
 function _opt_value { _opt_dbg _value_; _opt_push "$1"; unset _opt_expect; unset _opt_missing; }
-
-# NOTE: it is exceedingly important to pass parameters in quoted expansions like "$arg",
-# otherwise string content can and will get lost.
-#
-# If this function does not abort, a default missing value is assigned for reason missing-option
-# and for reason invalid-option, an error token is inserted before breaking into
-# non-option mode for the remaining tokens.
-#
-# Override this function as needed before calling opt_in, or disable it with opt_in silent.
-# Possible 'reason' values: "missing-value" | "invalid-option" | "default-option".
-function opt_user_fail { reason="$1"; name="$2"; msg="$3"; echo >&2 "$msg $name";
-    exit $E_BAD_ARGS; }
-
-
+function opt_user_fail { reason="$1"; name="$2"; msg="$3";
+    echo >&2 "$msg $name"; exit 1; }
 function opt_missing { _opt_dbg _missing_;
     _opt_value "${1:-${_opt_missing:-$_opt_tmissing}}";
     [ $_opt_silent -eq 0 ] && \
-        opt_user_fail "missing-value" "$_opt_expect" "error: option expected a value: ";
-}
-
-# If _opt_eager is set, potential options will be treated as values instead of
-# of injecting a default value and triggering a missing value error.
-# To illustrate eager consider the tar utilities eager behaviour:
-# e.g. "touch x && tar -c -f -foo x" wil create the file '-foo'
-# rather than failing on invalid option. On the other hand,
-# the rm tool will not remove it with 'rm -foo' but will with 'rm -- -foo'.
-# The latter is not eager or non-eager, it is an invalid option.
-# If tar has issued an invalid option error on the above, it would have
-# been strict behavior - and it would be difficult to create files that are
-# named similar to options. Whether that is good or bad is open for debate,
-# hence the choice of modes.
+        opt_user_fail "missing-value" "$_opt_expect" "error: option expected a value: "; }
 function _opt_put {
-    if [ -n "$_opt_expect" ]; then
-        [ $_opt_eager -ne 0 ] && _opt_dbg "_eager_" && _opt_value "$_opt_token" && return 0;
-        _opt_dbg "_strict_default_"
-        opt_missing;
-    fi;
-    _opt_dbg "_type_: $1" 
-    _opt_push "$2";
-    [ -n "$3" ] && _opt_value "$3"; }
-
-function opt_invalid { 
-    _opt_put "i: invalid option" "${1:-$_opt_tinvalid}";
+    if [ -n "$_opt_expect" ]; then [ $_opt_eager -ne 0 ] && _opt_dbg "_eager_" && \
+        _opt_value "$_opt_token" && return 0;
+        _opt_dbg "_strict_default_"; opt_missing; fi;
+    _opt_dbg "_type_: $1"; _opt_push "$2"; [ -n "$3" ] && _opt_value "$3"; }
+function opt_invalid { _opt_brk=1;
+    _opt_put "i: invalid option" "${1:-$_opt_tinvalid}" "$_opt_token";
     [ $_opt_silent -eq 0 ] &&  \
-        opt_user_fail "invalid-option" "$_opt_token" "error: invalid option: ";
-}
-
-# key-value option, e.g.: -o=<outfile> | --output=<outfile> (splits into -o "<outfile>")
-function opt_kv { _opt_put kv "$1" "${_opt_token#*=}"; }
-
-# expect-value option, e.g.: -o <outfile> | --ouput <outfile>
-# (consume -o, expects next token to be <outfile>) the next token must be
-# matched such that it reach opt_pos, or is ignored with opt_resume.
-function opt_ev { _opt_missing="$2";
-    _opt_put "ev: expect value option" "$1"; _opt_expect="$_opt_token"; } 
-
-# value option, e.g.: -o<outfile> (splits into -o "<outfile>" with proper escapes.
-function opt_v { _opt_dbg opt_v; _opt_put "v: value option"  "$1" "${_opt_token:2}"; }
-
-# flag option, e.g.: -v | --verbose
+        opt_user_fail "invalid-option" "$_opt_token" "error: invalid option: "; }
+function opt_kv { _opt_put "kv: key value" "$1" "${_opt_token#*=}"; }
+function opt_ev { _opt_missing="$2"; _opt_put "ev: expect value option" "$1";
+    _opt_expect="$_opt_token"; } 
+function opt_v { _opt_put "v: value option"  "$1" "${_opt_token:2}"; }
+function opt_vg { _opt_put "vg: value given option"  "$1" "$2"; }
+function opt_vs { _opt_put "vs: value suffix" "$1" "${_opt_token#$2}"; }
 function opt_f { _opt_put "f: flag option" "$1"; }
-
-# Break from option into non-option parsing. Typically when ' --' has been seen.
-# $1 is typically '--', or empty if separator should be skipped.
-# opt_pos has a similar argument, but inserts current token after.
-# Forces missing value error, also with eager parsing.
-function opt_break {
-    [ -n "$_opt_expect" ] && opt_missing;
-    [ $_opt_brk -eq 0 ] && [ -n "$1" ] && _opt_dbg _break_ && _opt_push "$1";
-    _opt_brk=1; }
-
-# Normally called via opt_pos to handle pending values
-# but otherwise pushes token as is, possible inserting -- or custom separator.
+function opt_break { [ -n "$_opt_expect" ] && _opt_dbg _break_expecting_ && opt_missing;
+    [ $_opt_brk -eq 0 ] && [ -n "$1" ] && _opt_dbg _break_ && _opt_push "$1"; _opt_brk=1; }
 function opt_nonopt { opt_break "$1"; _opt_dbg _nonopt_; _opt_push "$_opt_token"; }
-
-# Postional value: <filename> | <command> | ...
-# Either an expected value following opt_ev, and otherwise a call to opt_pos
-# will break token parsing on first non-option and pass on values until either
-# opt_resume is called, or opt_out stops the processing.
-# If given an argument, like '--', it will be inserted as flag just before
-# first non-option token, unless break was already called.
-function opt_pos { _opt_dbg _pos_; [ -n "$_opt_expect" ] && _opt_value "$_opt_token" || opt_nonopt "$1"; }
-
-# All options have 0 or 1 expected arguments. After that option parsing is
-# terminated extra non-option _opt_tokens are copied verbatim with opt_pos. It
-# is possible to resume _opt_token parsing manually, for example after a count,
-# by flagging resumopt_ev which takes no argument.
+function opt_pos { _opt_dbg _pos_; [ -n "$_opt_expect" ] && _opt_value "$_opt_token" \
+    || opt_nonopt "$1"; }
 function opt_resume { _opt_brk=0; _opt_dbg _resume_; }
-
-# Assigns the token to be parse and consumes tokens automatically after breaking
-# into nonoption mode. It must still be called with each token, and the return
-# code indicates if flags should be processed or skipped.
-function opt_next { _opt_token="$1"; 
-    _opt_dbg "args so far: $_opt_args"
-    _opt_dbg "next token: $1"
+function opt_next { _opt_token="$1"; OPT_TOKEN="$1";
+    _opt_dbg "args so far: $_opt_args"; _opt_dbg "next token: $1";
     if [ $_opt_brk -eq 0 ]; then return 0; else opt_pos; return 1; fi; }
-
 function opt_debug { echo >&2 "opt: token='$_opt_token'"; }
-
-# Initialize before calling any other parse functions.
-# Options: [debug] [silent | noisy] [eager | strict]
-#          [invalid=`invalid-token`] [missing=`missing-value`]
-function opt_in { _opt_args=""; _opt_token=""; _opt_qv=""; 
+function opt_init { _opt_args=""; _opt_token=""; _opt_qv=""; 
     _opt_brk=0; unset _opt_expect; unset OPT_ARGS; _opt_silent=0; _opt_eager=1;
     _opt_tinvalid='?'; _opt_tmissing=':'; _opt_dbg_enabled=0;
-    for _opt_i; do
-        _opt_dbg opt_in arg "$_opt_i"
+    for _opt_i; do _opt_dbg _opt_init_ arg "$_opt_i"
         case "$_opt_i" in silent) _opt_silent=1;; eager) _opt_eager=1;;
     strict) _opt_eager=0;; noisy) _opt_silent=0;; debug) _opt_dbg_enabled=1;;
     invalid=*) _opt_tinvalid=${_opt_i#*=};; missing=*) _opt_tmissing=${_opt_i#*=};;
-    *) echo >&2 "error: opt_in: invalid argument: $_opt_i";; esac; done; }
-
-# Replace the original command line options with the translated verions,
-# ready for the second pass, and clear all state.
-# OPT_ARGS holds an agument string of option value pairs all single quoted,
-# followed optionally by non-option separtor (typicall --), followed by
-# single quoted remaining tokens. Embedded single quotes are sandwiched as a
-# a doulbe quoted string with a single quote. This means the string can be parsed
-# predictably by counting single quotes. Each token is space separated.
-#
-# To inject into original argument list use: 
-#
-#     eval set -- $OPT_ARGS
-#
-# after call to opt_out. The above will affect the local function it is called in
-# or the main argument list, depending on where it is executed. We can therefore not
-# provide a function for it.
-function opt_out { 
+    *) echo >&2 "error: opt-in opt_init: invalid argument: $_opt_i";; esac; done; }
+function opt_final { 
     [ -z "$_opt_expect" ] || opt_missing;
-    # trim trailing space
-    OPT_ARGS="${_opt_args%?}";
-    _opt_dbg "OPT_ARGS: $OPT_ARGS"
-    unset _opt_args; unset _opt_token; unset _opt_qv; unset _opt_silent; unset opt_i;
-    unset _opt_brk; unset _opt_expect; unset _opt_missing; unset _opt_debug_enabled; 
+    OPT_ARGS="${_opt_args%?}"; OPT_IN="eval set -- $OPT_ARGS"; _opt_dbg "OPT_ARGS: $OPT_ARGS"
+   unset _opt_args; unset _opt_token; unset _opt_qv; unset _opt_silent;unset _opt_debug_enabled;
+    unset opt_i; unset _opt_brk; unset _opt_expect; unset _opt_missing; unset OPT_TOKEN;
     unset _opt_eager; unset _opt_tmissing; unset _opt_tinvaild; unset _opt_ping; }
-
-# Execute this to update main argument list with translated result:
-# (cannot be inside a function unless args are processed there)
-# eval set -- $OPT_ARGS;
-
-# ----------------------------------------------------------------------
-# end opt_in library
-# ----------------------------------------------------------------------
-
+# ------------------------- end opt-in library -------------------------
 
 # customize opt_in error handler
 function opt_user_fail {
@@ -567,7 +227,7 @@ function opt_user_fail {
     fail "$msg $name"
 }
 
-opt_in  strict #missing=42 invalid=43
+opt_init debug strict #missing=42 invalid=43
 for arg
 do
     if opt_next "$arg"; then
@@ -606,11 +266,11 @@ do
     esac
     fi
 done
+opt_final
 
 echo "args before long translation:\n$@"
-opt_out && eval "set -- $OPT_ARGS" || fail "internal: option parsing error"
-
 # put the translated arguments back on the input
+$OPT_IN
 echo "args after long translation:\n$@"
 
     echo "arg list:"
@@ -651,8 +311,13 @@ unset stdin_arg
 # (--) split operator
 unset split_arg
 
-function check_arg { [ -z "$2" ] && echo "empty argument not allowed for option $1";
-  [ "$2" == ":" ] && echo "missing argument not allowed for option $1"; }
+function check_arg {
+    if [ $1 -eq 1 ] && ( [ "$2" == ":" ] || [ -z "$2" ] ) ; then
+        echo $3;
+        echo "aborting."
+        exit 1;
+    fi
+}
 
 
 while [ -n "$1" ]
@@ -666,9 +331,9 @@ do
         -n)  n_arg=1; e_arg=1;;
         -v)  v_arg=1;;
         -x)  x_arg=1; e_arg=1;;
-        -o)  o_arg=1; o_val=$2; check_arg $@; shift;;
-        -p)  p_arg=1; p_val=$2; check_arg $@; shift;;
-        -s)  s_arg=1; s_val=$2; check_arg $@; shift;;
+        -o)  o_arg=1; o_val=$2; shift;;
+        -p)  p_arg=1; p_val=$2; shift;;
+        -s)  s_arg=1; s_val=$2; shift;;
         -)   stdin_arg=1;;
         --)  shift; echo "-- break"; break;;
         '?')  echo "invalid option: $2"; shift; break;;
@@ -716,49 +381,6 @@ echo >&2 "warning: option parsing not yet solid"
 
 OVERRIDE_DEVOPS_PROFILE=${DEVOPS_PROFILE}
 OVERRIDE_DEVOPS_SYSTEM=${DEVOPS_SYSTEM}
-# 
-# STD_IN=0
-# 
-# prefix=""
-# key=""
-# value=""
-# keyValue=$1
-# while [ ! -z "$keyValue" ]
-# do
-#   keyValue=$1
-#   case "${prefix}${keyValue}" in
-#     -h)                 key="-h";     value=1;;
-#     --help)             key="-H";     value=1;;
-#     -p=*|--profile=*)   key="-p";     value="${keyValue#*=}";;
-#     -s=*|--system=*)    key="-s";     value="${keyValue#*=}";;
-#     -o=*|--output=*)    key="-o";     value="${keyValue#*=}";;
-#     -d|--debug)         key="-d";     value=1;;
-#     -e|--export)        key="-e";     value=1;;
-#     -n|--no-expand)     key="-n";     value=1;;
-#     -x|--no-headers)    key="-x";     value=1;;
-#     -f|--force)         key="-f";     value=1;;
-#     -|--stdin)          key="-";      value=1;;
-#     --) shift; break;;
-#     -*) fail "error: bad option: $1";; # TODO: likely wrong value displayed in some cases
-#     *) break;; 
-#   esac
-#   shift
-#   case $key in
-#     -h) help; exit 0;;
-#     -H) document; exit 0;;
-#     -p) OVERRIDE_DEVOPS_PROFILE="${value}"; prefix=""; key="";;
-#     -s) OVERRIDE_DEVOPS_SYSTEM="${value}"; prefix=""; key="";;
-#     -d) DEVOPS_DEBUG="${value}"; prefix=""; key="";;
-#     -e) DEVOPS_EXPORT="${value}"; prefix=""; key="";;
-#     -o) DEVOPS_OUTPUT="${value}"; DEVOPS_EXPORT=1; prefix=""; key="";;
-#     -n) DEVOPS_NOEXPAND="${value}"; DEVOPS_EXPORT=1; prefix=""; key="";;
-#     -x) DEVOPS_NOHEADERS="${value}"; DEVOPS_EXPORT=1; prefix=""; key="";;
-#     -f) DEVOPS_FORCE="${value}"; prefix=""; key="";;
-#     -)  STD_IN=${value}; prefix=""; key="";; 
-#     *)  prefix="${keyValue}=";;
-#   esac
-# done
-
 
 # missing command, or unknown option
 if [ -z "$1" ]; then
