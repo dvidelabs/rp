@@ -163,7 +163,6 @@ function document {
 }
 
 
-
 # ----------------------------------------------------------------------
 # opt-in option pre-parser library, (c) 2014, Mikkel Fahnøe Jørgensen
 # Version: v0.1.0, License: MIT
@@ -204,6 +203,12 @@ function opt_resume { _opt_brk=0; _opt_dbg _resume_; }
 function opt_next { _opt_token="$1"; OPT_TOKEN="$1";
     _opt_dbg "args so far: $_opt_args"; _opt_dbg "next token: $1";
     if [ $_opt_brk -eq 0 ]; then return 0; else opt_pos; return 1; fi; }
+function opt_get { _opt_tail="$1"
+    if [ ! $_opt_brk -ne 0 ] && ( [ -z "$_opt_expect" ] || [ $_opt_eager -eq 0 ] ); then
+    while [ -n "${_opt_tail#-*}" ] && [ "$2" != "${2/${_opt_tail:1:1}/}" ]; do
+        _opt_dbg _combine_;
+        opt_next "${_opt_tail:0:2}"; opt_f "$OPT_TOKEN"; _opt_tail="-${_opt_tail:2}";
+        [ "$_opt_tail" == '-' ] && return 1; done; fi; opt_next "$_opt_tail"; }
 function opt_debug { echo >&2 "opt: token='$_opt_token'"; }
 function opt_init { _opt_args=""; _opt_token=""; _opt_qv=""; 
     _opt_brk=0; unset _opt_expect; unset OPT_ARGS; _opt_silent=0; _opt_eager=1;
@@ -213,13 +218,13 @@ function opt_init { _opt_args=""; _opt_token=""; _opt_qv="";
     strict) _opt_eager=0;; noisy) _opt_silent=0;; debug) _opt_dbg_enabled=1;;
     invalid=*) _opt_tinvalid=${_opt_i#*=};; missing=*) _opt_tmissing=${_opt_i#*=};;
     *) echo >&2 "error: opt-in opt_init: invalid argument: $_opt_i";; esac; done; }
-function opt_final { 
-    [ -z "$_opt_expect" ] || opt_missing;
+function opt_final { [ -z "$_opt_expect" ] || opt_missing;
     OPT_ARGS="${_opt_args%?}"; OPT_IN="eval set -- $OPT_ARGS"; _opt_dbg "OPT_ARGS: $OPT_ARGS"
-   unset _opt_args; unset _opt_token; unset _opt_qv; unset _opt_silent;unset _opt_debug_enabled;
-    unset opt_i; unset _opt_brk; unset _opt_expect; unset _opt_missing; unset OPT_TOKEN;
-    unset _opt_eager; unset _opt_tmissing; unset _opt_tinvaild; unset _opt_ping; }
+    unset _opt_args; unset _opt_token; unset _opt_qv; unset _opt_silent;unset _opt_debug_enabled;
+    unset _opt_eager; unset _opt_tmissing; unset _opt_tinvaild; unset _opt_ping; unset _opt_tail;
+    unset opt_i; unset _opt_brk; unset _opt_expect; unset _opt_missing; unset OPT_TOKEN; }
 # ------------------------- end opt-in library -------------------------
+
 
 # customize opt_in error handler
 function opt_user_fail {
@@ -230,7 +235,7 @@ function opt_user_fail {
 opt_init debug strict #missing=42 invalid=43
 for arg
 do
-    if opt_next "$arg"; then
+    if opt_get "$arg"; then
     case "$arg" in
 
        -d|--doc) opt_f -d ;;
@@ -353,7 +358,6 @@ exit
 echo "args left: $@"
 echo "done testing args"
 echo "system: $sarg"
-exit
 
 # Now the options are fully parsed and the input
 # arguments that remain will start with $1.
@@ -362,7 +366,6 @@ exit
 
 # Finally pass on the values to application logic.
 
-# TODO: deal with empty values for p, s, and o args.
 OVERRIDE_DEVOPS_PROFILE=$p_arg
 OVERRIDE_DEVOPS_SYSTEM=$s_arg
 DEVOPS_DEBUG=$v_arg
