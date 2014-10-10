@@ -1,5 +1,6 @@
 #!/bin/sh
-# VERSION: 0.1.0
+VERSION=0.1.0
+NAME=rp-tool
 
 set -e
 
@@ -1002,7 +1003,7 @@ $OPT_IN
 unset e_arg
 unset f_arg
 unset n_arg
-unset v_arg
+unset t_arg
 unset x_arg
 unset o_arg
 unset p_arg
@@ -1025,6 +1026,10 @@ function check_arg {
     fi
 }
 
+function show_version {
+    echo "$NAME version $VERSION";
+    exit 0;
+}
 
 while [ $# -gt 0 ]
 do
@@ -1034,7 +1039,8 @@ do
         -f)  f_arg=1;;
         -h)  help;;
         -n)  n_arg=1; e_arg=1;;
-        -v)  v_arg=1;;
+        -t)  t_arg=1;;
+        -v)  show_version;;
         -x)  x_arg=1; e_arg=1;;
         -o)  o_arg=1; o_val=$2; shift;;
         -p)  p_arg=1; p_val=$2; shift;;
@@ -1056,7 +1062,7 @@ done
 
 OVERRIDE_DEVOPS_PROFILE=$p_arg
 OVERRIDE_DEVOPS_SYSTEM=$s_arg
-DEVOPS_DEBUG=$v_arg
+DEVOPS_DEBUG=$t_arg
 DEVOPS_EXPORT=$e_arg
 DEVOPS_OUTPUT=$o_val
 DEVOPS_NOEXPAND=$n_arg
