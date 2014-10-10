@@ -287,17 +287,8 @@ done
 opt_final
 
 
-echo "args before long translation:\n$@"
 # put the translated arguments back on the input
 $OPT_IN
-echo "args after long translation:\n$@"
-
-    echo "arg list:"
-    for arg
-    do
-        echo $arg
-    done
-    echo "end arg list."
 
 
 # Now do a program specific parse.
@@ -361,18 +352,6 @@ do
     shift
 done
 
-echo "END OF TEST"
-exit
-
-# TODO: the following does not parse correctly:
-#  echo "\ _"
-#  echo "\ "
-#  echo ".\ ."
-
-echo "args left: $@"
-echo "done testing args"
-echo "system: $sarg"
-
 # Now the options are fully parsed and the input
 # arguments that remain will start with $1.
 # cmd_arg will have been set if we got any
@@ -389,12 +368,6 @@ DEVOPS_NOEXPAND=$n_arg
 DEVOPS_NOHEADERS=$x_arg
 DEVOPS_FORCE=$f_arg
 
-# parse args : http://stackoverflow.com/a/24121652
-# we cannot use this directly - we must stop at a command and fail at unknown option
-# then collect the remains for the subcommand - but it is nice base.
-
-#TODO:
-echo >&2 "warning: option parsing not yet solid"
 
 OVERRIDE_DEVOPS_PROFILE=${DEVOPS_PROFILE}
 OVERRIDE_DEVOPS_SYSTEM=${DEVOPS_SYSTEM}
@@ -410,13 +383,13 @@ else
     fi
 fi
 
-# this method is Posix compliant.
-command -v $1 >/dev/null 2>&1 || fail "error: command not found: $1"
-
 trace "loading profile"
 source `dirname $0`/load-profile
 
 if [ ! $DEVOPS_EXPORT ]; then
+    # this method is Posix compliant.
+    command -v $1 >/dev/null 2>&1 || fail "error: command not found: $1"
+
     $CMD
 fi
 
