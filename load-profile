@@ -1,5 +1,4 @@
 #!/bin/sh
-# http://stackoverflow.com/questions/19331497/set-environment-variables-from-file
 
 set -e
 
@@ -9,12 +8,15 @@ if [ "x$(basename $0)" == "xload_user_env" ]; then
     exit 1
 fi
 
+
 function trace
 {
-if [ $DEVOPS_DEBUG ]; then
-    echo >&2 $@
-fi
+    if [ $DEVOPS_DEBUG ]; then
+        echo >&2 "trace: $@"
+    fi
 }
+
+trace "loading profile"
 
 function raw_content
 {
@@ -123,7 +125,7 @@ function process
         # other solutions break because export must not be in a subshell
         # the following works ... sigh
         old_IFS=$IFS; IFS=$'\n'
-        # TODO: check that there are no unsupported templates
+
         for line in $(expanded_content $1); do export "$line"; done 
         IFS=$old_IFS
         [ -z "$DEVOPS_PROFILE_HOME" ] || echo >&2 "warning: DEVOPS_PROFILE_HOME canot be set in $(basename $1)\n- it is a computed value"
@@ -146,6 +148,7 @@ function check
         trace "force flag overrides error, continuing"
     fi
 }
+
 
 # In general values are set by the user in the environment,
 # but all values can be set in a subshell of the profiled
@@ -206,6 +209,7 @@ check DEVOPS_SYSTEM_ROOT ${OVERRIDE_DEVOPS_SYSTEM_ROOT}
 SYSTEM_ROOT_ARG=${OVERRIDE_DEVOPS_SYSTEM_ROOT}
 process ${OVERRIDE_DEVOPS_SYSTEM_ROOT}/common_system.env
 
+
 [ -z "$DEVOPS_PROFILE" ] || echo >&2 "warning: DEVOPS_PROFILE cannot be set in 'common_system.env'"
 [ -z "$DEVOPS_PROFILE_ROOT" ] || echo >&2 "warning: DEVOPS_PROFILE_ROOT cannot be set in 'common_system.env'"
 [ -z "$DEVOPS_SYSTEM_ROOT" ] || echo >&2 "warning: DEVOPS_SYSTEM_ROOT cannot be set in 'common_system.env'"
@@ -228,6 +232,7 @@ process ${OVERRIDE_DEVOPS_SYSTEM_HOME}/system.env
 [ -z "$DEVOPS_SYSTEM_ROOT" ] || echo >&2 "warning: DEVOPS_SYSTEM_ROOT cannot be set in 'system.env'"
 [ -z "$DEVOPS_PROFILE" ] || echo >&2 "warning: DEVOPS_PROFILE cannot be set in 'system.env'"
 [ -z "$DEVOPS_SYSTEM" ] || echo >&2 "warning: DEVOPS_SYSTEM cannot be set in 'system.env'"
+
 
 export DEVOPS_PROFILE_ROOT=${OVERRIDE_DEVOPS_PROFILE_ROOT}
 export DEVOPS_PROFILE_HOME=${OVERRIDE_DEVOPS_PROFILE_HOME}

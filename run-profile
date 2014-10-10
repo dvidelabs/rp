@@ -269,7 +269,7 @@ function opt_user_fail {
 
 
 
-opt_init debug silent
+opt_init #debug silent
 for arg
 do
     if opt_get "$arg" "fenvx"; then 
@@ -332,7 +332,6 @@ function check_arg {
 
 while [ $# -gt 0 ]
 do
-    echo "parsing opts"
     case $1 in
         -d)  document;;
         -e)  e_arg=1;;
@@ -383,7 +382,6 @@ else
     fi
 fi
 
-trace "loading profile"
 source `dirname $0`/load-profile
 
 if [ ! $DEVOPS_EXPORT ]; then
