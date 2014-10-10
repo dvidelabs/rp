@@ -1,8 +1,16 @@
 #!/bin/sh
-VERSION=0.1.0
+VERSION=0.1.1
 NAME=rp-tool
 
 set -e
+
+# CHANGELOG
+# 0.1.1
+#    fix arg parsing bug
+#    add support for .devops.conf for finding systems directory
+#
+# 0.1.0 initial release
+
 
 # ----------------------------------------------------------------------
 # dev_ops run_profile tool 'rp', (c) 2014, Mikkel Fahnøe Jørgensen,
@@ -104,6 +112,9 @@ Options:
 
     -d | --doc
             a long version of the help message
+
+    --init
+            creates .devops.conf and systems/common_system.env files
 EOF
 }
 
@@ -147,7 +158,15 @@ environment, but command line arguments will override these.
 The default paths without the above settings are:
 
     ~/.devops/profiles/profile.env
-    ./systems/system.env
+    <project-root>/systems/system.env
+
+Where project root is found by searching for the file
+
+    .devops.conf
+
+In current and all parent directories. IF not found, the current
+directory is used. Currently .devops.conf is not ready, it is just
+used as an anchor to find the systems directory.
 
 Both files are read in that order when present, but none are required.
 Without .env files, certain paths are still exposed to the environment
@@ -843,13 +862,6 @@ The following example only shows a few lines where relevant:
     DEVOPS_SYSTEM=dc01/producion
 
 
-TODO
-----
-
-Have a .rp in the checkout root from which the system root is
-relative, similar to how .git works. It can simply be created
-with 'touch .rp', or 'rp --init [<rel-sys-root>]' where
-.rp stores the relative system root.
 __ENDDOC__
 
     exit 0
@@ -961,7 +973,13 @@ function opt_user_fail {
 }
 # -------------------- end opt-in extension library --------------------
 
-
+function opt_match_lf {
+    case "$OPT_TOKEN" in
+        "$1") opt_f "$1" ;;
+        *) return 1 ;;
+    esac
+    return 0;
+}
 
 opt_init #debug silent
 for arg
@@ -975,10 +993,13 @@ do
         opt_match_cf -h --help       ||
         opt_match_cf -d --doc        ||
         opt_match_cf -x --no-expand  ||
+        
+        opt_match_lf --init          ||
+
         opt_match_cv -s --system     ||
         opt_match_cv -p --profile    ||
         opt_match_cv -o --output     ||
-        opt_match_nonoptions 
+        opt_match_nonoptions
     fi
 done
 opt_final
@@ -1008,6 +1029,7 @@ unset x_arg
 unset o_arg
 unset p_arg
 unset s_arg
+unset ip_arg
 
 o_val=""
 p_val=""
@@ -1031,21 +1053,34 @@ function show_version {
     exit 0;
 }
 
+unset OP_TYPE;
+unset OP_SRC;
+function set_type {
+    if [ -z "$OP_TYPE" ]; then
+        OP_TYPE=$1
+        OP_SRC=$2
+    else
+        if [ "$OP_TYPE" != $1 ]; then
+            fail "flag $OP_SRC incompatible with '$2', aborting";
+        fi  
+    fi
+}
+
 while [ $# -gt 0 ]
 do
     case $1 in
-        -d)  document;;
-        -e)  e_arg=1;;
+        --init) ip_arg=1; set_type init $1 ;;
+        -d)  document set_type doc $1 ;;
+        -e)  e_arg=1; set_type 'export' $1 ;;
         -f)  f_arg=1;;
         -h)  help;;
-        -n)  n_arg=1; e_arg=1;;
+        -n)  n_arg=1; e_arg=1; set_type 'export' $1 ;;
         -t)  t_arg=1;;
         -v)  show_version;;
-        -x)  x_arg=1; e_arg=1;;
-        -o)  o_arg=1; o_val=$2; shift;;
-        -p)  p_arg=1; p_val=$2; shift;;
-        -s)  s_arg=1; s_val=$2; shift;;
-        -)   stdin_arg=1;;
+        -x)  x_arg=1; e_arg=1 set_type 'export' $1 ;;
+        -o)  o_arg=1; o_val=$2; set_type 'export' $1; shift;;
+        -p)  p_arg=1; p_val=$2; set_type run $1; shift;;
+        -s)  s_arg=1; s_val=$2; set_type run $1; shift;;
         --)  shift; break;;
         '?')  echo "invalid option: $2"; shift; break;;
         *) echo "unexpected: '$1'" ;; #fail "internal: unexpected option or command";;
@@ -1060,6 +1095,7 @@ done
 
 # Finally pass on the values to application logic.
 
+INIT_PROJECT=$ip_arg
 OVERRIDE_DEVOPS_PROFILE=$p_arg
 OVERRIDE_DEVOPS_SYSTEM=$s_arg
 DEVOPS_DEBUG=$t_arg
@@ -1073,14 +1109,16 @@ DEVOPS_FORCE=$f_arg
 OVERRIDE_DEVOPS_PROFILE=${DEVOPS_PROFILE}
 OVERRIDE_DEVOPS_SYSTEM=${DEVOPS_SYSTEM}
 
+OP_TYPE=${OP_TYPE:-run}
+
 # missing command, or unknown option
 if [ -z "$1" ]; then
     CMD=env
 else
-    if [ ! $DEVOPS_EXPORT ]; then
+    if [ "$OP_TYPE" == run ]; then
         CMD=$@
     else
-        fail "command not allowed with any export option: $1"
+        fail "command '$1' not allowed for this type of operation: $OP_TYPE"
     fi
 fi
 
@@ -1090,7 +1128,6 @@ if [ "x$(basename $0)" == "xload_user_env" ]; then
     echo >&2 "see also bin/help load_profile"
     exit 1
 fi
-
 
 function trace
 {
@@ -1142,7 +1179,7 @@ function expanded_content
      | sed '/^[[:blank:]]*$/d' \
      | sed '/^[[:blank:]]*#.*/d' \
      | sed 's/[ \t]*$//'
-}  
+}
 
 function content
 {
@@ -1218,6 +1255,31 @@ function process
     fi
 }
 
+# for now we just use .devops.conf as an anchor without
+# reading it, and assume systems root is relative to
+# that location if found, or current path otherwise.
+function load_project_config
+{
+    unset PROJECT_CONFIG
+    PROJECT_ROOT=$(pwd);
+    DEFAULT_SYSTEM_ROOT="$(pwd)/systems";
+    DEFAULT_PROFILE_ROOT="${HOME}/.devops/profiles" 
+    SEARCH_PATH=$(pwd)
+    trace "searching current and parent dirs for devops.conf"
+    while [ -n "$SEARCH_PATH" ]; do
+        if [ -e "${SEARCH_PATH}/.devops.conf" ]; then
+            PROJECT_CONFIG="$SEARCH_PATH/.devops.conf"
+            PROJECT_ROOT="$SEARCH_PATH"
+            DEFAULT_SYSTEM_ROOT="${PROJECT_ROOT}/systems"
+            trace "project root dir found: ${PROJECT_ROOT}"
+            return;
+        fi; 
+        if [ "$SEARCH_PATH" == "/" ]; then break; fi
+        SEARCH_PATH=$(dirname "$SEARCH_PATH");
+    done
+    trace "no project root found, using current directory"
+}
+
 function check
 {
     option="$1=$2"
@@ -1239,6 +1301,30 @@ function check
 # will not be active. While an accidental implication,
 # it also seems the best thing to do.
 
+
+load_project_config
+
+if [ $INIT_PROJECT ]; then
+    if [ -z "$PROJECT_CONFIG" ]; then
+        echo "creating project"
+        mkdir -p systems || fail "could not create systems directory"
+        trace "creating systems directory if it doesn't exist"
+        trace "creating .devops.conf file to mark project location"
+        touch .devops.conf
+        if [ ! -e systems/common_system.env ]; then
+            trace "creating systems/common_system.env"
+            touch systems/common_system.env
+        else
+            trace "systems/common/system.env already exists, skipping"
+        fi
+    else
+        echo "skipping since '.devops.conf' already exists at:"
+        echo "  $PROJECT_CONFIG"
+        exit 1;
+    fi
+    exit 0;
+fi
+
 # Pick up from environment unless command line already overrides.
 OVERRIDE_DEVOPS_PROFILE_ROOT=${OVERRIDE_DEVOPS_PROFILE_ROOT:-${DEVOPS_PROFILE_ROOT:-""}}
 OVERRIDE_DEVOPS_PROFILE=${OVERRIDE_DEVOPS_PROFILE:-${DEVOPS_PROFILE:-""}}
@@ -1255,7 +1341,7 @@ unset DEVOPS_SYSTEM
 reset_profile_args
 reset_system_args
 
-OVERRIDE_DEVOPS_PROFILE_ROOT=${OVERRIDE_DEVOPS_PROFILE_ROOT:-${HOME}/.devops/profiles}
+OVERRIDE_DEVOPS_PROFILE_ROOT=${OVERRIDE_DEVOPS_PROFILE_ROOT:-${DEFAULT_PROFILE_ROOT}}
 check DEVOPS_PROFILE_ROOT ${OVERRIDE_DEVOPS_PROFILE_ROOT}
 PROFILE_ROOT_ARG=${OVERRIDE_DEVOPS_PROFILE_ROOT}
 process "${OVERRIDE_DEVOPS_PROFILE_ROOT}/common_profile.env"
@@ -1287,7 +1373,7 @@ unset DEVOPS_SYSTEM
 # profile args are decoupled from system configuration directly
 reset_profile_args
 
-OVERRIDE_DEVOPS_SYSTEM_ROOT=${OVERRIDE_DEVOPS_SYSTEM_ROOT:-$(pwd)/systems}
+OVERRIDE_DEVOPS_SYSTEM_ROOT=${OVERRIDE_DEVOPS_SYSTEM_ROOT:-${DEFAULT_SYSTEM_ROOT}}
 check DEVOPS_SYSTEM_ROOT ${OVERRIDE_DEVOPS_SYSTEM_ROOT}
 SYSTEM_ROOT_ARG=${OVERRIDE_DEVOPS_SYSTEM_ROOT}
 process ${OVERRIDE_DEVOPS_SYSTEM_ROOT}/common_system.env
@@ -1330,7 +1416,7 @@ else
     dump_meta
 fi
 
-if [ ! $DEVOPS_EXPORT ]; then
+if [ "$OP_TYPE" == "run" ]; then
     # this method is Posix compliant.
     command -v $1 >/dev/null 2>&1 || fail "error: command not found: $1"
 
