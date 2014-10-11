@@ -220,7 +220,7 @@ EOF
 }
 
 function help {
-    echo "$(brief)\n\nMore help with: ${name} --help"
+    echo "$(brief)\n\nMore help with: rp --doc | less"
     exit 0
 }
 
@@ -729,6 +729,7 @@ the values within their own file:
 
     variable                valid for 
     -------------------------------------------------------
+    {{ project_home }}      all
     {{ profile_root }}      common_profile.env, profile.env
     {{ profile_home }}      profile.env
     {{ profile }}           profile.env
@@ -736,7 +737,13 @@ the values within their own file:
     {{ system_home }}       system.env
     {{ system }}            system.env
 
-No other template arguments are allowed.
+No other template arguments are allowed - they are passed unchanged.
+
+Don't confuse {{ project_home }} with {{ profile_home }}. The project
+home is the current directory unless a parent directory contains the
+file `.devops.conf` in which case that directory becomes the project
+directory. Various default paths rely on the project home path. Like
+all home paths, the project home path is computed and cannot be changed.
 
 The reason why systems do not see profiles is to separate concerns and
 ease maintenance. Tools have access to all paths via the environment.
