@@ -1,12 +1,13 @@
 #!/bin/sh
-VERSION=0.1.2+
+VERSION=0.1.3
 NAME="rp (run-profile)"
 
 set -e
 
 # CHANGELOG
-# 0.1.2+
+# 0.1.3
 #    add help description with command prompt example.
+#    add system specific bin directory.
 #
 # 0.1.2
 #    {{ project_home }} substitution supported.
@@ -120,7 +121,7 @@ Options:
             a long version of the help message
 
     --exclude-bin
-            exclude {{ project_home }}/bin from executable path
+            exclude {{ system_home }}/bin:{{ project_home }}/bin from executable path
 
     --init
             creates .devops.conf and systems/common_system.env files
@@ -188,11 +189,19 @@ Profiles SHOULD NOT be added to source control, they hold
 personal secrets and are kept separate for that reason.
 
 When a command is run, the global system PATH environment is used as
-usual, but PATH is by default extended with '{{ project_home }}/bin'
+usual, but PATH is by default extended with
+
+    {{ system_home }}/bin:{{ project_home }}/bin
+
 for both the current command, and any command executed indirectly.
 This is useful for running various scripts as part of the tooling -
 especially because small wrapper scripts are often needed to take
-advantage of the environment variables made available.
+advantage of the environment variables made available. The system
+specific bin directory is useful for things like:
+
+    rp publish
+
+Which might only make sense for a web site or blog system.
 
 The entire environment can be frozen in a sub-shell like:
 
@@ -1487,15 +1496,23 @@ function check_cmd {
 }
 
 if [ "$OP_TYPE" == "run" ]; then
-    if [ -d "${PROJECT_HOME}/bin" ]; then
-        if [ ! $DEVOPS_EXCLUDE_PROJECT_BIN ]; then
-            trace "extending PATH variable with: ${PROJECT_HOME}/bin"
-            export PATH="$PATH:$PROJECT_HOME/bin"
-        else
-            trace "ignoring project bin path due to exclusion flag"
-        fi
+    if [ $DEVOPS_EXCLUDE_PROJECT_BIN ]; then
+        trace "ignoring project bin path due to exclusion flag"
     else
-        trace "no project bin found, skipping path extension"
+        # Allow specific systems to provide scripts and to override project defaults.
+        # We do no support system root bin path, that would get a bit excessive.
+        if [ -d "${DEVOPS_SYSTEM_HOME}/bin" ]; then
+            trace "extending PATH variable with: ${DEVOPS_SYSTEM_HOME}/bin"
+            export PATH="$PATH:$DEVOPS_SYSTEM_HOME/bin"
+        else
+            trace "no {{ system_home }}/bin found, skipping path extension"
+        fi
+        if [ -d "${DEVOPS_PROJECT_HOME}/bin" ]; then
+            trace "extending PATH variable with: ${DEVOPS_PROJECT_HOME}/bin"
+            export PATH="$PATH:$DEVOPS_PROJECT_HOME/bin"
+        else
+            trace "no {{ project_home }}/bin found, skipping path extension"
+        fi
     fi
     check_cmd "$OP" || fail "error: command not found: $OP"
     trace "executing: $CMD"
