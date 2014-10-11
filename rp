@@ -1,10 +1,14 @@
 #!/bin/sh
-VERSION=0.1.1
-NAME=rp-tool
+VERSION=0.1.2
+NAME="rp (run-profile)"
 
 set -e
 
 # CHANGELOG
+# 0.1.2
+#    {{ project_home }} substitution supported.
+#    {{ project_home }}/bin added to executable path by default. 
+#
 # 0.1.1
 #    fix arg parsing bug
 #    add support for .devops.conf for finding systems directory
@@ -85,7 +89,6 @@ Options:
 
     -e | --export
             expands and exports .env files with '[<basename>]' as separator
-            (commands are not alloved)
 
     -n | --no-expand
             disables template expansion
@@ -113,8 +116,12 @@ Options:
     -d | --doc
             a long version of the help message
 
+    --exclude-bin
+            exclude {{ project_home }}/bin from executable path
+
     --init
             creates .devops.conf and systems/common_system.env files
+
 EOF
 }
 
@@ -155,22 +162,47 @@ The profile environment does not exists before or after the call.
 <system> and <profile> are optional, and may also be given in the
 environment, but command line arguments will override these.
 
-The default paths without the above settings are:
-
-    ~/.devops/profiles/profile.env
-    <project-root>/systems/system.env
-
-Where project root is found by searching for the file
-
-    .devops.conf
-
-In current and all parent directories. IF not found, the current
-directory is used. Currently .devops.conf is not ready, it is just
-used as an anchor to find the systems directory.
-
 Both files are read in that order when present, but none are required.
 Without .env files, certain paths are still exposed to the environment
 which may be used to locate other configuration files.
+
+The default paths without the above settings are:
+
+    {{ profile_root }}/profiles/profile.env
+    {{ project_home }}/systems/system.env
+
+Where {{ profile_root }} defaults to '~/.devops', and {{ project_home }}
+is the current directory unless
+
+    .devops.conf
+
+is found in a parent directory, which then becomes the project home.
+Currently the file is not read, it is just an anchor. It can be created
+with 'rp --init' and normally .devops.conf should be added to source
+control.
+
+Profiles SHOULD NOT be added to source control, they hold
+personal secrets and are kept separate for that reason.
+
+When a command is run, the global system PATH environment is used as
+usual, but PATH is by default extended with '{{ project_home }}/bin'
+for both the current command, and any command executed indirectly.
+This is useful for running various scripts as part of the tooling -
+especially because small wrapper scripts are often needed to take
+advantage of the environment variables made available.
+
+The entire environment can be frozen in a sub-shell like:
+
+    rp bash
+
+or, for example:
+
+    rp --profile joe/aws1 bash
+
+All secrets are exposed, but also, all scripts can be run at native
+speeds in the current path, even when outside the project directory.
+This trades convenience for safety and potential confusion.
+
 EOF
 }
 
@@ -993,7 +1025,7 @@ do
         opt_match_cf -h --help       ||
         opt_match_cf -d --doc        ||
         opt_match_cf -x --no-expand  ||
-        
+        opt_match_lf --exclude-bin   ||
         opt_match_lf --init          ||
 
         opt_match_cv -s --system     ||
@@ -1030,6 +1062,7 @@ unset o_arg
 unset p_arg
 unset s_arg
 unset ip_arg
+unset exbin_arg
 
 o_val=""
 p_val=""
@@ -1070,6 +1103,7 @@ while [ $# -gt 0 ]
 do
     case $1 in
         --init) ip_arg=1; set_type init $1 ;;
+        --exclude-bin) exbin_arg=1; set_type 'run' $1 ;;
         -d)  document set_type doc $1 ;;
         -e)  e_arg=1; set_type 'export' $1 ;;
         -f)  f_arg=1;;
@@ -1095,7 +1129,8 @@ done
 
 # Finally pass on the values to application logic.
 
-INIT_PROJECT=$ip_arg
+DEVOPS_EXCLUDE_PROJECT_BIN=$exbin_arg
+DEVOPS_INIT_PROJECT=$ip_arg
 OVERRIDE_DEVOPS_PROFILE=$p_arg
 OVERRIDE_DEVOPS_SYSTEM=$s_arg
 DEVOPS_DEBUG=$t_arg
@@ -1113,10 +1148,12 @@ OP_TYPE=${OP_TYPE:-run}
 
 # missing command, or unknown option
 if [ -z "$1" ]; then
+    OP=env
     CMD=env
 else
     if [ "$OP_TYPE" == run ]; then
         CMD=$@
+        OP=$1
     else
         fail "command '$1' not allowed for this type of operation: $OP_TYPE"
     fi
@@ -1162,7 +1199,7 @@ function reset_system_args
 
 function expanded_content
 {
-
+    _prj=$(printf '%s\n' "$PROJECT_HOME_ARG" | sed 's:[\/&]:\\&:g;$!s/$/\\/')
     _pr=$(printf '%s\n' "$PROFILE_ROOT_ARG" | sed 's:[\/&]:\\&:g;$!s/$/\\/')
     _ph=$(printf '%s\n' "$PROFILE_HOME_ARG" | sed 's:[\/&]:\\&:g;$!s/$/\\/')
     _p=$(printf '%s\n' "$PROFILE_ARG" | sed 's:[\/&]:\\&:g;$!s/$/\\/')
@@ -1170,6 +1207,7 @@ function expanded_content
     _sh=$(printf '%s\n' "$SYSTEM_HOME_ARG" | sed 's:[\/&]:\\&:g;$!s/$/\\/')
     _s=$(printf '%s\n' "$SYSTEM_ARG" | sed 's:[\/&]:\\&:g;$!s/$/\\/')
     cat $1 \
+     | sed "s/{{[[:blank:]]*project_home[[:blank:]]*}}/${_prj}/"  \
      | sed "s/{{[[:blank:]]*profile_root[[:blank:]]*}}/${_pr}/"  \
      | sed "s/{{[[:blank:]]*profile_home[[:blank:]]*}}/${_ph}/"  \
      | sed "s/{{[[:blank:]]*profile[[:blank:]]*}}/${_p}/"  \
@@ -1261,7 +1299,7 @@ function process
 function load_project_config
 {
     unset PROJECT_CONFIG
-    PROJECT_ROOT=$(pwd);
+    PROJECT_HOME=$(pwd);
     DEFAULT_SYSTEM_ROOT="$(pwd)/systems";
     DEFAULT_PROFILE_ROOT="${HOME}/.devops/profiles" 
     SEARCH_PATH=$(pwd)
@@ -1269,15 +1307,15 @@ function load_project_config
     while [ -n "$SEARCH_PATH" ]; do
         if [ -e "${SEARCH_PATH}/.devops.conf" ]; then
             PROJECT_CONFIG="$SEARCH_PATH/.devops.conf"
-            PROJECT_ROOT="$SEARCH_PATH"
-            DEFAULT_SYSTEM_ROOT="${PROJECT_ROOT}/systems"
-            trace "project root dir found: ${PROJECT_ROOT}"
+            PROJECT_HOME="$SEARCH_PATH"
+            DEFAULT_SYSTEM_ROOT="${PROJECT_HOME}/systems"
+            trace "project home found: ${PROJECT_HOME}"
             return;
         fi; 
         if [ "$SEARCH_PATH" == "/" ]; then break; fi
         SEARCH_PATH=$(dirname "$SEARCH_PATH");
     done
-    trace "no project root found, using current directory"
+    trace "project home not found, using current directory"
 }
 
 function check
@@ -1304,7 +1342,7 @@ function check
 
 load_project_config
 
-if [ $INIT_PROJECT ]; then
+if [ $DEVOPS_INIT_PROJECT ]; then
     if [ -z "$PROJECT_CONFIG" ]; then
         echo "creating project"
         mkdir -p systems || fail "could not create systems directory"
@@ -1340,6 +1378,12 @@ unset DEVOPS_SYSTEM
 
 reset_profile_args
 reset_system_args
+
+# Project home is always defined, either current directory
+# or the ancestor with a '.devops.conf' filei, and cannot
+# be set. May be used to set system root as relative path.
+PROJECT_HOME_ARG="$PROJECT_HOME"
+
 
 OVERRIDE_DEVOPS_PROFILE_ROOT=${OVERRIDE_DEVOPS_PROFILE_ROOT:-${DEFAULT_PROFILE_ROOT}}
 check DEVOPS_PROFILE_ROOT ${OVERRIDE_DEVOPS_PROFILE_ROOT}
@@ -1409,6 +1453,7 @@ export DEVOPS_PROFILE=${OVERRIDE_DEVOPS_PROFILE}
 export DEVOPS_SYSTEM_ROOT=${OVERRIDE_DEVOPS_SYSTEM_ROOT}
 export DEVOPS_SYSTEM_HOME=${OVERRIDE_DEVOPS_SYSTEM_HOME}
 export DEVOPS_SYSTEM=${OVERRIDE_DEVOPS_SYSTEM}
+export DEVOPS_PROJECT_HOME=${PROJECT_HOME}
 
 if [ -n "$DEVOPS_OUTPUT" ]; then
     dump_meta > $DEVOPS_OUTPUT
@@ -1416,10 +1461,24 @@ else
     dump_meta
 fi
 
-if [ "$OP_TYPE" == "run" ]; then
+function check_cmd {
     # this method is Posix compliant.
-    command -v $1 >/dev/null 2>&1 || fail "error: command not found: $1"
+    command -v $1 >/dev/null 2>&1
+}
 
+if [ "$OP_TYPE" == "run" ]; then
+    if [ -d "${PROJECT_HOME}/bin" ]; then
+        if [ ! $DEVOPS_EXCLUDE_PROJECT_BIN ]; then
+            trace "extending PATH variable with: ${PROJECT_HOME}/bin"
+            export PATH="$PATH:$PROJECT_HOME/bin"
+        else
+            trace "ignoring project bin path due to exclusion flag"
+        fi
+    else
+        trace "no project bin found, skipping path extension"
+    fi
+    check_cmd "$OP" || fail "error: command not found: $OP"
+    trace "executing: $CMD"
     $CMD
 fi
 
