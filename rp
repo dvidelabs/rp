@@ -1,10 +1,13 @@
 #!/bin/sh
-VERSION=0.1.2
+VERSION=0.1.2+
 NAME="rp (run-profile)"
 
 set -e
 
 # CHANGELOG
+# 0.1.2+
+#    add help description with command prompt example.
+#
 # 0.1.2
 #    {{ project_home }} substitution supported.
 #    {{ project_home }}/bin added to executable path by default. 
@@ -199,11 +202,21 @@ or, for example:
 
     rp --profile joe/aws1 bash
 
-All secrets are exposed, but also, all scripts can be run at native
-speeds in the current path, even when outside the project directory.
+You probably want to update your prompt, for example in .bashrc for OS X:
+
+    PS1='\[\e[0;33m\]\u\[\e[0m\]@\[\e[0;32m\]\h\[\e[0m\]:\[\e[0;34m\]\w\[\e[0m\]\\$ '
+    if [ -n "\$DEVOPS_PROFILE" ]; then
+        # set prompt for subshell
+        PS1="\e[0;32m\][\$DEVOPS_PROFILE]\[\e[0m\]:\[\e[0;34m\]\w\[\e[0m\]\\$ "
+    fi
+
+All secrets are exposed in the subshell, but also, all scripts can be run
+at native speeds in the current path, even when outside the project directory.
 This trades convenience for safety and potential confusion.
 
 EOF
+# NOTE: in the prompt above, '$' has been escaped with '\$' remove the '\' in
+# the .bashrc if reading this in the source file.
 }
 
 function help {
