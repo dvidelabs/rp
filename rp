@@ -1,25 +1,35 @@
 #!/bin/sh
-VERSION=0.1.3
+VERSION=0.1.4
 NAME="rp (run-profile)"
 
 set -e
 
 # CHANGELOG
+# 0.1.4
+#    * give project bin dirs precedence over global commands
+#      as they often tend to conflict: e.g. script to ping
+#      or login to remote host.
+#      Add short option -g for global command, rename
+#      --exclude-bin to --global.
+#    * fix unexpected handler to fail properly
+#   
+#
 # 0.1.3
-#    add help description with command prompt example.
-#    add system specific bin directory.
-#    use {{ system_root }}/bin instead of {{ project_home }}/bin
-#    so rp dependent scripts are kept separate from main scripts.
+#    * add help description with command prompt example.
+#    * add system specific bin directory.
+#    * use {{ system_root }}/bin instead of {{ project_home }}/bin
+#      so rp dependent scripts are kept separate from main scripts.
 #
 # 0.1.2
-#    {{ project_home }} substitution supported.
-#    {{ project_home }}/bin added to executable path by default. 
+#    * {{ project_home }} substitution supported.
+#      {{ project_home }}/bin added to executable path by default. 
 #
 # 0.1.1
-#    fix arg parsing bug
-#    add support for .devops.conf for finding systems directory
+#    * fix arg parsing bug
+#    * add support for .devops.conf for finding systems directory
 #
-# 0.1.0 initial release
+# 0.1.0
+#    * initial release
 
 
 # ----------------------------------------------------------------------
@@ -122,7 +132,7 @@ Options:
     -d | --doc
             a long version of the help message
 
-    --exclude-bin
+    -g | --global
             exclude {{ system_home }}/bin:{{ system_root }}/bin from executable path
 
     --init
@@ -1056,7 +1066,7 @@ do
         opt_match_cf -h --help       ||
         opt_match_cf -d --doc        ||
         opt_match_cf -x --no-expand  ||
-        opt_match_lf --exclude-bin   ||
+        opt_match_cf -g --global     ||
         opt_match_lf --init          ||
 
         opt_match_cv -s --system     ||
@@ -1134,7 +1144,7 @@ while [ $# -gt 0 ]
 do
     case $1 in
         --init) ip_arg=1; set_type init $1 ;;
-        --exclude-bin) exbin_arg=1; set_type 'run' $1 ;;
+        -g)  exbin_arg=1; set_type 'run' $1 ;;
         -d)  document set_type doc $1 ;;
         -e)  e_arg=1; set_type 'export' $1 ;;
         -f)  f_arg=1;;
@@ -1147,8 +1157,8 @@ do
         -p)  p_arg=1; p_val=$2; set_type run $1; shift;;
         -s)  s_arg=1; s_val=$2; set_type run $1; shift;;
         --)  shift; break;;
-        '?')  echo "invalid option: $2"; shift; break;;
-        *) echo "unexpected: '$1'" ;; #fail "internal: unexpected option or command";;
+        ?)   echo "invalid option: $2"; shift; break;;
+        *) fail "internal: unexpected option or command";;
     esac
     shift
 done
@@ -1503,18 +1513,18 @@ if [ "$OP_TYPE" == "run" ]; then
     else
         # Allow specific systems to provide scripts and to override project defaults.
         # We do no support system root bin path, that would get a bit excessive.
-        if [ -d "${DEVOPS_SYSTEM_HOME}/bin" ]; then
-            trace "extending PATH variable with: ${DEVOPS_SYSTEM_HOME}/bin"
-            export PATH="$PATH:$DEVOPS_SYSTEM_HOME/bin"
-        else
-            trace "no {{ system_home }}/bin found, skipping path extension"
-        fi
         if [ "$DEVOPS_SYSTEM_ROOT" != "$DEVOPS_SYSTEM_HOME" ] &&
             [ -d "${DEVOPS_SYSTEM_ROOT}/bin" ]; then
             trace "extending PATH variable with: ${DEVOPS_SYSTEM_ROOT}/bin"
-            export PATH="$PATH:$DEVOPS_SYSTEM_ROOT/bin"
+            export PATH="$DEVOPS_SYSTEM_ROOT/bin:$PATH"
         else
             trace "no {{ system_root }}/bin found, skipping path extension"
+        fi
+        if [ -d "${DEVOPS_SYSTEM_HOME}/bin" ]; then
+            trace "extending PATH variable with: ${DEVOPS_SYSTEM_HOME}/bin"
+            export PATH="$DEVOPS_SYSTEM_HOME/bin:$PATH"
+        else
+            trace "no {{ system_home }}/bin found, skipping path extension"
         fi
     fi
     check_cmd "$OP" || fail "error: command not found: $OP"
