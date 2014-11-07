@@ -1,10 +1,15 @@
 #!/bin/sh
-VERSION=0.1.4
+VERSION=0.1.5
 NAME="rp (run-profile)"
 
 set -e
 
 # CHANGELOG
+#  0.1.5
+#    * fix trimming trailing t in env values from bad regex
+#    * fix -p <profile> and -s <system> not overriding 
+#      values in .env files
+#
 # 0.1.4
 #    * give project bin dirs precedence over global commands
 #      as they often tend to conflict: e.g. script to ping
@@ -1170,10 +1175,15 @@ done
 
 # Finally pass on the values to application logic.
 
+
 DEVOPS_EXCLUDE_PROJECT_BIN=$exbin_arg
 DEVOPS_INIT_PROJECT=$ip_arg
-OVERRIDE_DEVOPS_PROFILE=$p_arg
-OVERRIDE_DEVOPS_SYSTEM=$s_arg
+
+# if env var is set, or command line arg is given
+# then override value in .env files
+OVERRIDE_DEVOPS_PROFILE=${p_val:-$DEVOPS_PROFILE}
+OVERRIDE_DEVOPS_SYSTEM=${s_val:-$DEVOPS_SYSTEM}
+
 DEVOPS_DEBUG=$t_arg
 DEVOPS_EXPORT=$e_arg
 DEVOPS_OUTPUT=$o_val
@@ -1182,8 +1192,6 @@ DEVOPS_NOHEADERS=$x_arg
 DEVOPS_FORCE=$f_arg
 
 
-OVERRIDE_DEVOPS_PROFILE=${DEVOPS_PROFILE}
-OVERRIDE_DEVOPS_SYSTEM=${DEVOPS_SYSTEM}
 
 OP_TYPE=${OP_TYPE:-run}
 
@@ -1257,7 +1265,7 @@ function expanded_content
      | sed "s/{{[[:blank:]]*system[[:blank:]]*}}/${_s}/"  \
      | sed '/^[[:blank:]]*$/d' \
      | sed '/^[[:blank:]]*#.*/d' \
-     | sed 's/[ \t]*$//'
+     | sed 's/[[:blank:]]*$//'
 }
 
 function content
