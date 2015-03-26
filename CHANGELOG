@@ -1,0 +1,36 @@
+ 0.1.6
+   * split documention out into README file
+   * prepare for public release
+
+ 0.1.5
+   * fix trimming trailing t in env values from bad regex
+   * fix -p <profile> and -s <system> not overriding 
+     values in .env files
+
+0.1.4
+   * give project bin dirs precedence over global commands
+     as they often tend to conflict: e.g. script to ping
+     or login to remote host.
+     Add short option -g for global command, rename
+     --exclude-bin to --global.
+   * fix unexpected handler to fail properly
+  
+
+0.1.3
+   * add help description with command prompt example.
+   * add system specific bin directory.
+   * use {{ system_root }}/bin instead of {{ project_home }}/bin
+     so rp dependent scripts are kept separate from main scripts.
+
+0.1.2
+   * {{ project_home }} substitution supported.
+     {{ project_home }}/bin added to executable path by default. 
+
+0.1.1
+   * fix arg parsing bug
+   * add support for .devops.conf for finding systems directory
+
+0.1.0
+   * initial release
+
+
